@@ -62,6 +62,9 @@ jobs:
         id: contract
         if: steps.sync.outputs.changed == 'true'
         continue-on-error: true
+        # shell: bash を明示すると -o pipefail が付く。既定の shell では tee の
+        # 終了コードで上書きされ、テストの失敗が「通過」として本文に載ってしまう
+        shell: bash
         run: bun run test:contract 2>&1 | tee "$RUNNER_TEMP/contract.log"
 
       - name: 同期 PR を作る・更新する
