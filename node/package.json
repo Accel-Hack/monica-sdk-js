@@ -1,0 +1,43 @@
+{
+  "name": "@ah-monica/node",
+  "version": "0.1.1",
+  "description": "Node.js SDK for sending application errors to MONICA",
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "files": ["dist", "README.md"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "bun run build:core && tsc -p tsconfig.build.json",
+    "build:core": "bun run --filter @ah-monica/core build",
+    "pack:check": "bun run build && bun pm pack --dry-run",
+    "test": "bun run build:core && bun test",
+    "test:runtime": "node test/runtime-smoke.mjs",
+    "typecheck": "bun run build:core && tsc --noEmit"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Accel-Hack/monica-sdk-js.git",
+    "directory": "node"
+  },
+  "dependencies": {
+    "@ah-monica/core": "0.1.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.21",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.2"
+  }
+}

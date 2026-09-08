@@ -1,0 +1,34 @@
+{
+  "name": "@ah-monica/core",
+  "version": "0.1.1",
+  "description": "Runtime-neutral transport and buffering core for the MONICA SDK",
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "files": ["dist", "README.md"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "pack:check": "bun run build && bun pm pack --dry-run",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Accel-Hack/monica-sdk-js.git",
+    "directory": "core"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.21",
+    "typescript": "^5.9.2"
+  }
+}

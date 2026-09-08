@@ -1,0 +1,6 @@
+node_modules/
+*/dist/
+
+# Wrangler / Miniflare のローカル状態（cloudflare の runtime smoke が作る）
+.wrangler/
+*/.wrangler/
