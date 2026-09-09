@@ -106,13 +106,18 @@ async function readLocal(path: string): Promise<Uint8Array | undefined> {
 }
 
 /** 配信元の一覧を決める。index.json があればそれ、無ければ手元のコピーの一覧 */
-async function upstreamListing(): Promise<{ index: Index | undefined; paths: string[] }> {
+async function upstreamListing(): Promise<{
+  index: Index | undefined;
+  /** 取得した index.json そのもの。検証した bytes をそのまま書き込む */
+  raw: Uint8Array | undefined;
+  paths: string[];
+}> {
   const raw = await fetchBytes("index.json");
   if (!raw) {
     console.warn(
       "index.json は配信されていない。手元のコピーにあるファイルだけを取り直す（上流で増えたファイルは見つからない）",
     );
-    return { index: undefined, paths: localFiles().filter((path) => path !== "index.json") };
+    return { index: undefined, raw, paths: localFiles().filter((path) => path !== "index.json") };
   }
   const index = JSON.parse(new TextDecoder().decode(raw)) as Index;
   if (index.version !== VERSION) {
@@ -129,29 +134,13 @@ async function upstreamListing(): Promise<{ index: Index | undefined; paths: str
   if (computeRevision(index.files) !== index.revision) {
     throw new Error("index.json の revision が files から再計算した値と一致しない");
   }
-  return { index, paths: index.files.map((file) => file.path) };
+  return { index, raw, paths: index.files.map((file) => file.path) };
 }
 
 export async function sync(options: { write: boolean }): Promise<SyncResult> {
-  const { index, paths } = await upstreamListing();
+  const { index, raw, paths } = await upstreamListing();
   const digests = new Map(index?.files.map((file) => [file.path, file.sha256]) ?? []);
   const fetched = new Map<string, Uint8Array>();
-
-  for (const path of paths) {
-    const bytes = await fetchBytes(path);
-    if (!bytes) throw new Error(`${path}: index.json に載っているのに 404`);
-    const expected = digests.get(path);
-    if (expected && sha256(bytes) !== expected) {
-      throw new Error(`${path}: sha256 が index.json と一致しない（取得中に更新された可能性）`);
-    }
-    fetched.set(path, bytes);
-  }
-  if (index) {
-    const raw = await fetchBytes("index.json");
-    if (!raw) throw new Error("index.json が取得中に消えた");
-    fetched.set("index.json", raw);
-  }
-
   const result: SyncResult = {
     revision: index?.revision,
     added: [],
@@ -160,13 +149,34 @@ export async function sync(options: { write: boolean }): Promise<SyncResult> {
     unchanged: 0,
     fallback: index === undefined,
   };
+
+  for (const path of paths) {
+    const bytes = await fetchBytes(path);
+    if (!bytes) {
+      // index.json に載っているのに無いのは配信元の異常。fallback（一覧が手元由来）では
+      // 上流で消されたファイルなので、削除として扱う
+      if (index) throw new Error(`${path}: index.json に載っているのに 404`);
+      result.removed.push(path);
+      continue;
+    }
+    const expected = digests.get(path);
+    if (expected && sha256(bytes) !== expected) {
+      throw new Error(`${path}: sha256 が index.json と一致しない（取得中に更新された可能性）`);
+    }
+    fetched.set(path, bytes);
+  }
+  // 各ファイルの digest を検証したのと同じ index.json を書く。取り直すと、その間に上流が
+  // 再公開されていた場合に revision とファイル群が食い違ったまま書き込まれる
+  if (raw) fetched.set("index.json", raw);
+
   for (const [path, bytes] of fetched) {
     const local = await readLocal(path);
     if (local === undefined) result.added.push(path);
     else if (Buffer.compare(local, bytes) !== 0) result.changed.push(path);
     else result.unchanged += 1;
   }
-  // index.json があるときだけ、上流に無いファイルを消す。fallback では一覧が手元由来なので判断できない
+  // index.json があるときは、上流に無いファイルをすべて消す。fallback では一覧が手元由来なので
+  // 「取りに行って 404 だったもの」だけが削除になる（上で積んである）
   if (index) {
     for (const path of localFiles()) {
       if (!fetched.has(path)) result.removed.push(path);
