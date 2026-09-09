@@ -50,7 +50,7 @@ bun run test:contract    # 契約テストだけ
 | --- | --- | --- |
 | [`ci.yml`](.github/workflows/ci.yml) | PR と main への push | `bun run check` と、Node 20 / 22 / 24 での `node` / `next` の runtime smoke |
 | [`spec-sync.yml`](.github/workflows/spec-sync.yml) | 平日 09:00 JST と手動 | 公開契約バンドルの差分検査と同期 PR |
-| [`npm-release.yml`](.github/workflows/npm-release.yml) | `npm-v*` tag | 4 package を npm へ公開 |
+| [`npm-release.yml`](.github/workflows/npm-release.yml) | `v*` tag | 4 package を npm へ公開 |
 
 ## リリース
 
@@ -58,7 +58,7 @@ bun run test:contract    # 契約テストだけ
    `next` → `core` / `node`）を同じ版に上げる。各 adapter が envelope の `sdk.version` に
    書く値も同じ版にする（テストが package.json と照合する）
 2. PR で main へ merge する
-3. その commit に `npm-vX.Y.Z` tag を付けて push する。tag の版が 4 package の版と
+3. その commit に `vX.Y.Z` tag を付けて push する。tag の版が 4 package の版と
    一致しないと workflow が落ちる
 
 publish は npm の Trusted Publishing（OIDC）で行い、長期の publish token は持たない。

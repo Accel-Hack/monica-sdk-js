@@ -1,6 +1,6 @@
 name: npm release
 
-# 4 package の version を同じ値に更新して main へ merge した後、npm-v0.2.0 のような
+# 4 package の version を同じ値に更新して main へ merge した後、v0.2.0 のような
 # tag をその commit へ付けると公開する。
 #
 # npm の Trusted Publishing は「repository + workflow ファイル名」に紐づく。
@@ -9,7 +9,7 @@ name: npm release
 on:
   push:
     tags:
-      - "npm-v*"
+      - "v*"
 
 concurrency:
   group: npm-release
@@ -60,7 +60,7 @@ jobs:
             exit 1
           }
 
-          tag_version="${GITHUB_REF_NAME#npm-v}"
+          tag_version="${GITHUB_REF_NAME#v}"
           core_version=$(node -p "require('./core/package.json').version")
           node_version=$(node -p "require('./node/package.json').version")
           cloudflare_version=$(node -p "require('./cloudflare/package.json').version")
