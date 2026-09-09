@@ -1,0 +1,100 @@
+name: npm release
+
+# 4 package の version を同じ値に更新して main へ merge した後、v0.2.0 のような
+# tag をその commit へ付けると公開する。
+#
+# npm の Trusted Publishing は「repository + workflow ファイル名」に紐づく。
+# 4 package とも npmjs.com の Settings → Trusted Publisher で
+# Accel-Hack/monica-sdk-js の npm-release.yml を指している必要がある。
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: npm-release
+  cancel-in-progress: false
+
+# npm Trusted Publishing が GitHub の OIDC token を発行するために必要。
+# NPM_TOKEN などの長期 publish token は使用しない。
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: "@ah-monica packages を公開"
+    if: github.repository == 'Accel-Hack/monica-sdk-js'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      # Trusted Publishing には npm 11.5.1 以上が必要。trust 設定用 CLI とも
+      # version を揃え、release ごとの CLI 差分を避ける。
+      - name: Trusted Publishing 対応 npm を準備
+        run: npm install --global npm@11.19.1
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+
+      - name: 依存関係を固定 lockfile から復元
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: tag・main・package version を検証
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "::error::npm release tag は main に含まれる commit へ付けてください。"
+            exit 1
+          }
+
+          tag_version="${GITHUB_REF_NAME#v}"
+          core_version=$(node -p "require('./core/package.json').version")
+          node_version=$(node -p "require('./node/package.json').version")
+          cloudflare_version=$(node -p "require('./cloudflare/package.json').version")
+          next_version=$(node -p "require('./next/package.json').version")
+          node_core_version=$(node -p "require('./node/package.json').dependencies['@ah-monica/core']")
+          cloudflare_core_version=$(node -p "require('./cloudflare/package.json').dependencies['@ah-monica/core']")
+          next_core_version=$(node -p "require('./next/package.json').dependencies['@ah-monica/core']")
+          next_node_version=$(node -p "require('./next/package.json').dependencies['@ah-monica/node']")
+          if [[ "$tag_version" != "$core_version" || "$tag_version" != "$node_version" || "$tag_version" != "$cloudflare_version" || "$tag_version" != "$next_version" ]]; then
+            echo "::error::tag=$tag_version core=$core_version node=$node_version cloudflare=$cloudflare_version next=$next_version。version を一致させてください。"
+            exit 1
+          fi
+          if [[ "$node_core_version" != "$core_version" || "$cloudflare_core_version" != "$core_version" || "$next_core_version" != "$core_version" || "$next_node_version" != "$node_version" ]]; then
+            echo "::error::core=$core_version node依存=$node_core_version cloudflare依存=$cloudflare_core_version next-core依存=$next_core_version next-node依存=$next_node_version。version を一致させてください。"
+            exit 1
+          fi
+
+      - name: package を検証
+        run: bun run check
+
+      # package 間依存の順に公開し、参照する同 version を registry へ用意する。
+      # id-token: write により npm CLI が OIDC を自動検出するため auth token は不要。
+      - name: "@ah-monica/core を公開"
+        working-directory: core
+        run: npm publish --access public
+
+      - name: "@ah-monica/node を公開"
+        working-directory: node
+        run: npm publish --access public
+
+      - name: "@ah-monica/cloudflare を公開"
+        working-directory: cloudflare
+        run: npm publish --access public
+
+      - name: "@ah-monica/next を公開"
+        working-directory: next
+        run: npm publish --access public

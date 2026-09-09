@@ -1,0 +1,91 @@
+name: ci
+
+# 4 package（core / node / cloudflare / next）の typecheck・test・pack:check・
+# runtime smoke と、vendoring した公開契約バンドル（spec/v1/）に対する契約テストを回す。
+#
+# spec/v1/ が配信元 https://spec.monica.accelhack.net/v1/ と食い違っていたら
+# ここで落とす。直すのは bun run spec:sync でコピーを取り直して commit する。
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: 全体チェック
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+
+      - run: bun install --frozen-lockfile
+
+      # check:* は typecheck / test（契約テスト込み）/ pack:check / runtime smoke。
+      # pack:check が公開物の中身も検証する
+      - name: 4 package と tooling を確認
+        run: bun run check
+
+      - name: 公開契約バンドルのコピーが配信元と一致しているか
+        run: bun run spec:check
+
+  node:
+    name: Node SDK / Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+
+      - run: bun install --frozen-lockfile
+      - run: bun run --filter @ah-monica/node build
+      - run: bun run --filter @ah-monica/node test:runtime
+
+  next:
+    name: Next SDK / Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+
+      - run: bun install --frozen-lockfile
+      - run: bun run --filter @ah-monica/next build
+      - run: bun run --filter @ah-monica/next test:runtime

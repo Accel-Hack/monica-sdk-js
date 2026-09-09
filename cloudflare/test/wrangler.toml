@@ -1,0 +1,4 @@
+name = "monica-cloudflare-runtime-smoke"
+main = "worker-smoke.ts"
+compatibility_date = "2026-08-29"
+compatibility_flags = ["no_nodejs_compat", "no_nodejs_compat_v2"]
