@@ -1,10 +1,10 @@
 {
   "description": "RFC 3339 の T ではなく空白区切り",
   "valid": false,
-  "schema_rejects": false,
+  "schema_rejects": true,
   "envelope": {
     "sdk": {
-      "name": "monica.javascript",
+      "name": "@ah-monica/core",
       "version": "1.0.0"
     },
     "sent_at": "2026-08-30 00:00:00Z",

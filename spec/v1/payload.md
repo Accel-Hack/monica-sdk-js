@@ -1,6 +1,3 @@
-<!-- 生成物。手で編集しても次の生成で消える。
-     正本は MONICA の apps/docs/src/spec/ にある。 -->
-
 # Payload の生成義務 (v1)
 
 envelope の形は [`envelope.json`](./envelope.json) が決める。schema を通っても
@@ -16,7 +13,7 @@ grouping が壊れる書き方があるので、SDK が守るべきことをこ�
 
 - `sent_at`、`timestamp`、breadcrumb の `timestamp` は RFC 3339 の date-time にする。timezone を必ず付ける（`2026-08-30T09:00:00+09:00` か `...Z`）
 - `T` の代わりに空白を使わない。暦として存在しない日付を送らない。どちらも `422` になる
-- 公開している JSON Schema はこれを表現していない（`type: "string"` まで）。MONICA 側の検証だけが弾くので、schema を通ったことを送信可否の判断に使わない
+- 公開している JSON Schema は形（`pattern`）までを表す。各欄が範囲内か（月が 12 以下、日がその月に実在する、時刻と offset が 23:59 以下）は表せないので、MONICA 側の検証だけが弾く。schema を通ったことを送信可否の判断に使わない
 
 ## in_app
 

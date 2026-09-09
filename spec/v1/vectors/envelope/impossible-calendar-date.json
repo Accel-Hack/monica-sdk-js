@@ -4,7 +4,7 @@
   "schema_rejects": false,
   "envelope": {
     "sdk": {
-      "name": "monica.javascript",
+      "name": "@ah-monica/core",
       "version": "1.0.0"
     },
     "sent_at": "2026-02-31T00:00:00Z",

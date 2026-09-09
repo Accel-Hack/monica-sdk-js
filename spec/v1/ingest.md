@@ -1,6 +1,3 @@
-<!-- 生成物。手で編集しても次の生成で消える。
-     正本は MONICA の apps/docs/src/spec/ にある。 -->
-
 # Ingest API (v1)
 
 MONICA へ event を送る唯一の経路。
@@ -30,12 +27,18 @@ https://<api key>@<host>/<任意のパス>
 
 鍵の種別とヘッダが食い違うと `401` になる。public key で読み取り API は叩けない。
 
+送信先・ヘッダ・status ごとの挙動・リトライの定数は
+[`transport.json`](./transport.json) にも同じ値がある。SDK
+の契約テストはこの表を読んで定数を写すのではなく、そちらと突き合わせる。
+`status` のキーは HTTP status の文字列で、`5xx` のように末尾の
+`x` で範囲を表すものがある。個別のコードが無ければ範囲の方を引く。
+
 ## リクエスト
 
 - body は envelope 1 通の JSON を gzip したもの。`Content-Encoding: gzip` を必ず付ける
 - 1 リクエスト = 1 envelope。複数 envelope を連結して送らない
 - 上限を超える分は SDK 側で envelope を分割する。分割の境界は item
-- `sdk.name` と `sdk.version` は空文字にしない。取り込み状況の集計単位になる
+- `sdk.name` は配布 registry での package 名（`@ah-monica/core`、`com.accelhack.monica:monica-core` のように npm / Maven / Composer で公開している名前）、`sdk.version` はその package の版。どちらも空文字にしない。取り込み状況の集計単位になる
 
 ## 上限
 
@@ -60,7 +63,8 @@ https://<api key>@<host>/<任意のパス>
 | `429` | レート制限 | `Retry-After` 秒だけ待ってから再送する |
 | `5xx` | サーバ側の障害 | backoff してリトライする |
 
-`422` は field-level の issue を返す。
+エラー時の body の形は [`error.json`](./error.json)。`422` だけが
+field-level の `issues` を持つ。
 
 ```json
 {
@@ -73,6 +77,9 @@ https://<api key>@<host>/<任意のパス>
   }
 }
 ```
+
+`code` は人が読む用で、SDK の分岐は HTTP status で行う。新しい `code`
+が増えることは互換性を壊す変更ではない。
 
 ## リトライ
 
