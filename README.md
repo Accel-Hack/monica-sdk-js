@@ -52,9 +52,9 @@ bun run test:contract    # 契約テストだけ
 
 ## リリース
 
-1. 4 package の `version` と、package 間の依存（`node` → `core`、`cloudflare` → `core`、
-   `next` → `core` / `node`）を同じ版に上げる。各 adapter が envelope の `sdk.version` に
-   書く値も同じ版にする（テストが package.json と照合する）
+1. `bun run version X.Y.Z` で 4 package の `version`、package 間依存の pin、
+   各 package の `src/**/version.ts` を同じ版にする。`bun install` で `bun.lock` も更新する。
+   4 package は常に同じ版で一括リリースする（ズレは `bun run check:tooling` が落とす）
 2. PR で main へ merge する
 3. その commit に `vX.Y.Z` tag を付けて push する。tag の版が 4 package の版と
    一致しないと workflow が落ちる

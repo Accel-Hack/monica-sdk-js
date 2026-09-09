@@ -8,6 +8,7 @@ import {
   type MonicaFrame,
   type MonicaUser,
 } from "@ah-monica/core";
+import { SDK_VERSION } from "./version.js";
 import type {
   CaptureContext,
   MonicaNodeClient,
@@ -42,7 +43,7 @@ export function createNodeClient(options: NodeClientOptions): MonicaNodeClient {
     batchSize: options.batchSize,
     flushIntervalMs: options.flushIntervalMs,
     beforeSend: options.beforeSend,
-    sdk: { name: "@ah-monica/node", version: "0.1.1" },
+    sdk: { name: "@ah-monica/node", version: SDK_VERSION },
   });
 
   function currentScope(): ScopeState {

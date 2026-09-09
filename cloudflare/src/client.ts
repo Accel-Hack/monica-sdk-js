@@ -7,6 +7,7 @@ import {
   type MonicaFrame,
   type MonicaRequest,
 } from "@ah-monica/core";
+import { SDK_VERSION } from "./version.js";
 import type {
   CloudflareCaptureContext,
   CloudflareClientOptions,
@@ -39,7 +40,7 @@ export function createCloudflareClient(
     release: options.release,
     sampleRate: options.sampleRate,
     beforeSend: options.beforeSend,
-    sdk: { name: "@ah-monica/cloudflare", version: "0.1.1" },
+    sdk: { name: "@ah-monica/cloudflare", version: SDK_VERSION },
   });
 
   async function captureAndFlush(

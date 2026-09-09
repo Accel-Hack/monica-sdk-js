@@ -1,3 +1,4 @@
+import { SDK_VERSION } from "./version.js";
 import type {
   CaptureHint,
   CaptureItemInput,
@@ -26,7 +27,7 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
   const now = options.now ?? (() => new Date());
   const random = options.random ?? Math.random;
   const generateEventId = options.generateEventId ?? (() => crypto.randomUUID());
-  const sdk = options.sdk ?? { name: "@ah-monica/core", version: "0.1.1" };
+  const sdk = options.sdk ?? { name: "@ah-monica/core", version: SDK_VERSION };
 
   const queue: MonicaItem[] = [];
   const pendingCaptures = new Set<Promise<unknown>>();

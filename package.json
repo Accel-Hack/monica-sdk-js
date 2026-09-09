@@ -17,6 +17,7 @@
     "check:next": "bun run --filter @ah-monica/next typecheck && bun run --filter @ah-monica/next test && bun run --filter @ah-monica/next pack:check && bun run --filter @ah-monica/next test:runtime && bun run --filter @ah-monica/next test:next-build",
     "check:tooling": "bun test tooling",
     "test:contract": "bun run --filter @ah-monica/next build:dependencies && bun test contract.test",
+    "version": "bun run tooling/set-version.ts",
     "spec:sync": "bun run tooling/spec-sync.ts",
     "spec:check": "bun run tooling/spec-sync.ts --check"
   },

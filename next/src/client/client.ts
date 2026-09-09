@@ -7,6 +7,7 @@ import {
   type MonicaRequest,
   type MonicaUser,
 } from "@ah-monica/core";
+import { SDK_VERSION } from "./version.js";
 import type {
   MonicaNextClient,
   NextClientCaptureContext,
@@ -41,7 +42,7 @@ export function createNextClient(options: NextClientOptions): MonicaNextClient {
     batchSize: options.batchSize,
     flushIntervalMs: options.flushIntervalMs,
     beforeSend: options.beforeSend,
-    sdk: { name: "@ah-monica/next", version: "0.1.1" },
+    sdk: { name: "@ah-monica/next", version: SDK_VERSION },
   });
   let removeGlobalHandlers: (() => void) | undefined;
 
