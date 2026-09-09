@@ -59,7 +59,7 @@ export function createNextClient(options: NextClientOptions): MonicaNextClient {
         ? { breadcrumbs: breadcrumbs.map((breadcrumb) => ({ ...breadcrumb })) }
         : {}),
       ...(context.request ? { request: cloneRequest(context.request) } : {}),
-      ...(context.fingerprint ? { fingerprint: [...context.fingerprint] } : {}),
+      ...(context.fingerprint?.length ? { fingerprint: [...context.fingerprint] } : {}),
     };
   }
 
@@ -131,6 +131,15 @@ export function createNextClient(options: NextClientOptions): MonicaNextClient {
     const target = globalThis as unknown as Partial<BrowserEventTarget>;
     if (!target.addEventListener || !target.removeEventListener) return () => {};
     const onError: EventListener = (event) => {
+      // Only an uncaught error arrives as an ErrorEvent. A subresource load
+      // failure (a broken <img>, <script> or <link>) is a plain Event with
+      // bubbles: false whose target is the element, carrying neither error nor
+      // message; capturing one would turn a single broken asset into an ingest
+      // request per occurrence, all collapsing into one meaningless issue.
+      // Measured in Chrome: such an event only reaches a window listener
+      // registered with capture: true, so the bubble-phase registration below
+      // does not see it today. This keeps that true if the phase ever changes.
+      if (!isUncaughtErrorEvent(event, target)) return;
       const candidate = event as Event & { error?: unknown; message?: string };
       const error = candidate.error ?? candidate.message ?? "Unknown global error";
       void captureAndFlush(error, { type: "onerror", handled: false });
@@ -172,6 +181,21 @@ export function createNextClient(options: NextClientOptions): MonicaNextClient {
     flush: core.flush,
     close,
   };
+}
+
+/**
+ * Tell an uncaught error from a subresource load failure. Both arrive as "error"
+ * on window; only the uncaught error is an ErrorEvent.
+ */
+function isUncaughtErrorEvent(event: Event, target: unknown): boolean {
+  const errorEvent = (globalThis as { ErrorEvent?: unknown }).ErrorEvent;
+  if (typeof errorEvent === "function") {
+    return event instanceof (errorEvent as new () => Event);
+  }
+  // Without ErrorEvent, fall back to the target: a subresource failure reports
+  // the element, an uncaught error reports window (or nothing at all).
+  const eventTarget = (event as { target?: unknown }).target;
+  return eventTarget === undefined || eventTarget === null || eventTarget === target;
 }
 
 function assertPublicDsn(dsn: string): void {

@@ -82,4 +82,24 @@ describe("public contract: @ah-monica/cloudflare", () => {
     expect(validate(envelope), describeErrors(validate)).toBe(true);
     expect(enumOf(errorItemProperty(schema, "level"))).toContain(envelope.items[0]!.level as string);
   });
+
+  test("空の fingerprint は載せない", async () => {
+    // $defs.errorItem.properties.fingerprint は minItems: 1。payload.md も空配列にしないと書く
+    expect(errorItemProperty(schema, "fingerprint").minItems).toBe(1);
+    let request: Request | undefined;
+    const client = createCloudflareClient({
+      dsn: "https://msk_example@ingest.example.test/1",
+      environment: "production",
+      fetch: async (input, init) => {
+        request = new Request(input, init);
+        return new Response(null, { status: 202 });
+      },
+    });
+    await client.captureException(new Error("boom"), { fingerprint: [] });
+    await client.close();
+
+    const envelope = (await decodeGzipBody(request!)) as Envelope;
+    expect(validate(envelope), describeErrors(validate)).toBe(true);
+    expect(envelope.items[0]).not.toHaveProperty("fingerprint");
+  });
 });

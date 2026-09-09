@@ -60,7 +60,18 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
     let items: MonicaItem[] | undefined;
     let sentAt = "";
     while (queue.length > 0 && !items) {
-      sentAt = now().toISOString();
+      try {
+        sentAt = now().toISOString();
+      } catch {
+        // A caller-supplied `now` that throws (or returns an invalid Date) leaves
+        // no way to build sent_at, so this batch can never go out. Account for it
+        // as discarded and return: observability must not take the host
+        // application down, and both `void sendBatch()` sites drop the promise,
+        // so a rejection here would surface as an unhandled rejection.
+        discarded += queue.splice(0, Math.min(batchSize, queue.length)).length;
+        scheduleTimer();
+        return false;
+      }
       let count = Math.min(batchSize, queue.length);
       while (count > 0) {
         const candidate = {
@@ -91,8 +102,12 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
     if (!items) return oversizedDrops === 0;
     const reportedDiscarded = discarded;
     discarded = 0;
-    const operation = options.transport
-      .send(
+    // A caller-supplied `transport.send` that throws synchronously would reject
+    // this async function, and both `void sendBatch()` sites drop the promise:
+    // that is an unhandled rejection, which takes a Node process down by
+    // default. Wrapping the call turns it into the rejection path below.
+    const operation = (async () =>
+      options.transport.send(
         {
           sdk,
           sent_at: sentAt,
@@ -100,7 +115,7 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
           items,
         },
         signal,
-      )
+      ))()
       .then((result) => {
         if (!result.accepted) discarded += items.length + reportedDiscarded;
         return result.accepted && oversizedDrops === 0;
@@ -141,6 +156,11 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
         if (processed === null) return null;
         item = processed;
       }
+
+      // The adapters drop these while building the item, but beforeSend runs
+      // afterwards and core.capture is a published entry point, so neither path
+      // is covered by that guard.
+      item = withoutEmptyContractArrays(item);
 
       if (queue.length >= maxQueueSize) {
         queue.shift();
@@ -184,6 +204,31 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
   }
 
   return { capture, flush, close };
+}
+
+/**
+ * Drop the two empty arrays the wire contract forbids: `fingerprint` and
+ * `exception.values` are the only `minItems: 1` constraints on an error item,
+ * and a `422` discards the whole envelope, so one such item takes every
+ * unrelated event batched alongside it down with it. Both fields are optional,
+ * so dropping them lets the event through.
+ *
+ * This is not payload validation — choosing what to send stays with the
+ * application (see beforeSend). It only removes values that could never reach
+ * MONICA and would destroy other events on the way out.
+ */
+function withoutEmptyContractArrays(item: MonicaItem): MonicaItem {
+  const emptyFingerprint = Array.isArray(item.fingerprint) && item.fingerprint.length === 0;
+  const emptyValues =
+    item.exception !== undefined &&
+    Array.isArray(item.exception.values) &&
+    item.exception.values.length === 0;
+  if (!emptyFingerprint && !emptyValues) return item;
+  // beforeSend may hand back an object the application still holds onto.
+  const copy = { ...item };
+  if (emptyFingerprint) delete copy.fingerprint;
+  if (emptyValues) delete copy.exception;
+  return copy;
 }
 
 function assertOptions(options: CoreClientOptions): void {
