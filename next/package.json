@@ -1,6 +1,6 @@
 {
   "name": "@ah-monica/next",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Next.js client and server adapters for the MONICA SDK",
   "license": "Apache-2.0",
   "type": "module",
@@ -40,8 +40,8 @@
     "directory": "next"
   },
   "dependencies": {
-    "@ah-monica/core": "0.1.1",
-    "@ah-monica/node": "0.1.1",
+    "@ah-monica/core": "0.1.2",
+    "@ah-monica/node": "0.1.2",
     "server-only": "0.0.1"
   },
   "peerDependencies": {

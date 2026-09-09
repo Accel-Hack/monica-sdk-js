@@ -382,3 +382,69 @@ describe("public contract: ingest HTTP", () => {
     expect(attempts).toBe(2);
   });
 });
+
+/**
+ * ingest.md / README の前提: observability が host application を落としてはならない。
+ * flush timer と capture の fatal / batch-full 経路は `void sendBatch()` で promise を
+ * 捨てるので、sendBatch が reject すると unhandled rejection になり、Node は既定で
+ * プロセスを落とす。
+ */
+describe("public contract: 利用者が渡した関数が throw しても落ちない", () => {
+  const item: CaptureItemInput = {
+    type: "error",
+    platform: "node",
+    level: "fatal",
+    // now が throw する場合を試すため、capture 側では now を呼ばせない
+    timestamp: "2026-08-29T00:00:00.000Z",
+  };
+
+  async function withoutUnhandledRejections(
+    body: () => Promise<void>,
+  ): Promise<void> {
+    const rejections: unknown[] = [];
+    const onUnhandled = (reason: unknown) => rejections.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      await body();
+      // unhandled rejection の判定は microtask を流し切った後に行われる
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(rejections.map(String)).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  }
+
+  test("transport.send が同期的に throw しても捨てた分に勘定して続ける", async () => {
+    await withoutUnhandledRejections(async () => {
+      const client = createCoreClient({
+        environment: "production",
+        transport: {
+          send() {
+            throw new Error("transport exploded");
+          },
+        },
+      });
+      // level: "fatal" は capture の中で void sendBatch() に入る経路
+      await client.capture(item);
+      const result = await client.flush();
+      expect(result.discarded).toBe(1);
+      expect(result.remaining).toBe(0);
+    });
+  });
+
+  test("now が同期的に throw しても捨てた分に勘定して続ける", async () => {
+    await withoutUnhandledRejections(async () => {
+      const client = createCoreClient({
+        environment: "production",
+        transport: recordingTransport([]),
+        now: () => {
+          throw new Error("clock exploded");
+        },
+      });
+      await client.capture(item);
+      const result = await client.flush();
+      expect(result.discarded).toBe(1);
+      expect(result.remaining).toBe(0);
+    });
+  });
+});

@@ -26,7 +26,9 @@ try {
 }
 ```
 
-`MONICA_DSN` は `https://<secret-key>@<ingest-host>/<project-id>` の形式。
+`MONICA_DSN` は `https://<secret-key>@<ingest-host>` の形式。パスを付けても構わないが、
+送信先は origin に `/v1/envelope` を付けたものになり、DSN のパス・クエリ・フラグメントは
+捨てられる。project の識別はキーで行われるので、DSN のパスに project id を書く必要はない。
 MONICAへイベントを送るにはプロジェクトのAPIキーが必要。Node.jsサーバでは
 管理画面で発行したsecret key（`msk_...`）を環境変数にだけ保存し、ソースコード、
 ログ、クライアント配信物には含めない。npmからpackageをinstallするだけなら、

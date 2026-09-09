@@ -124,7 +124,7 @@ function contextValues(context: CloudflareCaptureContext) {
       ? { breadcrumbs: context.breadcrumbs.map((breadcrumb) => ({ ...breadcrumb })) }
       : {}),
     ...(context.request ? { request: cloneRequest(context.request) } : {}),
-    ...(context.fingerprint ? { fingerprint: [...context.fingerprint] } : {}),
+    ...(context.fingerprint?.length ? { fingerprint: [...context.fingerprint] } : {}),
   };
 }
 

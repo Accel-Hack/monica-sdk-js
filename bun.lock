@@ -10,9 +10,9 @@
     },
     "cloudflare": {
       "name": "@ah-monica/cloudflare",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "dependencies": {
-        "@ah-monica/core": "0.1.1",
+        "@ah-monica/core": "0.1.2",
       },
       "devDependencies": {
         "@types/bun": "^1.2.21",
@@ -22,7 +22,7 @@
     },
     "core": {
       "name": "@ah-monica/core",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "devDependencies": {
         "@types/bun": "^1.2.21",
         "typescript": "^5.9.2",
@@ -30,10 +30,10 @@
     },
     "next": {
       "name": "@ah-monica/next",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "dependencies": {
-        "@ah-monica/core": "0.1.1",
-        "@ah-monica/node": "0.1.1",
+        "@ah-monica/core": "0.1.2",
+        "@ah-monica/node": "0.1.2",
         "server-only": "0.0.1",
       },
       "devDependencies": {
@@ -52,9 +52,9 @@
     },
     "node": {
       "name": "@ah-monica/node",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "dependencies": {
-        "@ah-monica/core": "0.1.1",
+        "@ah-monica/core": "0.1.2",
       },
       "devDependencies": {
         "@types/bun": "^1.2.21",

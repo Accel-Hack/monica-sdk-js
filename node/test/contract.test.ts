@@ -12,8 +12,9 @@ import {
   errorItemProperty,
   readEnvelopeSchema,
   readLimits,
+  type JsonObject,
 } from "../../tooling/contract.js";
-import { createNodeClient } from "../src/index.js";
+import { createNodeClient, type MonicaNodeClient } from "../src/index.js";
 
 const schema = await readEnvelopeSchema();
 const limits = await readLimits();
@@ -53,6 +54,25 @@ async function capturedEnvelope(): Promise<{ envelope: Envelope; request: Reques
   await client.close();
   if (!request) throw new Error("nothing was sent");
   return { envelope: (await decodeGzipBody(request)) as Envelope, request };
+}
+
+async function envelopeOf(
+  capture: (client: MonicaNodeClient) => void | Promise<void>,
+): Promise<Envelope | undefined> {
+  let request: Request | undefined;
+  const client = createNodeClient({
+    dsn: "https://msk_example@ingest.example.test/1",
+    environment: "production",
+    batchSize: 1,
+    maxRetries: 0,
+    fetch: async (input, init) => {
+      request = new Request(input, init);
+      return new Response(null, { status: 202 });
+    },
+  });
+  await capture(client);
+  await client.close();
+  return request ? ((await decodeGzipBody(request)) as Envelope) : undefined;
 }
 
 describe("public contract: @ah-monica/node", () => {
@@ -157,6 +177,111 @@ describe("public contract: @ah-monica/node", () => {
     );
     expect(mechanismEnum).toContain("onerror");
     expect(mechanismEnum).toContain("onunhandledrejection");
+  });
+
+  test("値を持たない例外でも exception.values は空にならない", async () => {
+    // envelope.json の $defs.exception.values は minItems: 1。空配列を出すと、同じ batch に
+    // 載った他の event ごと envelope 全体が 422 で捨てられる
+    const minItems = (definition(schema, "exception").properties as Record<string, JsonObject>)
+      .values!.minItems as number;
+    for (const thrown of [null, undefined]) {
+      const envelope = await envelopeOf((client) => void client.captureException(thrown));
+      expect(envelope, `captureException(${String(thrown)}) sent nothing`).toBeDefined();
+      expect(validate(envelope), describeErrors(validate)).toBe(true);
+      const values = (envelope!.items[0]!.exception as { values: unknown[] }).values;
+      expect(values.length).toBeGreaterThanOrEqual(minItems);
+    }
+  });
+
+  test("素の Promise.reject() を拾った unhandledRejection も schema を通る", async () => {
+    // reason が undefined でも envelope は組めていなければならない
+    const envelope = await envelopeOf((client) => {
+      const uninstall = client.installProcessHooks({ unhandledRejection: true });
+      try {
+        // 実際の素の Promise.reject() が runtime から渡す形をそのまま再現する
+        (process as unknown as { emit(event: string, ...args: unknown[]): boolean }).emit(
+          "unhandledRejection",
+          undefined,
+          Promise.resolve(),
+        );
+      } finally {
+        uninstall();
+      }
+    });
+    expect(envelope).toBeDefined();
+    expect(validate(envelope), describeErrors(validate)).toBe(true);
+    const values = (envelope!.items[0]!.exception as { values: Array<{ mechanism: { type: string } }> })
+      .values;
+    expect(values.length).toBeGreaterThan(0);
+    expect(values[0]!.mechanism.type).toBe("onunhandledrejection");
+  });
+
+  test("空の fingerprint は載せない", async () => {
+    // $defs.errorItem.properties.fingerprint は minItems: 1。payload.md も空配列にしないと書く
+    const fingerprint = errorItemProperty(schema, "fingerprint");
+    expect(fingerprint.minItems).toBe(1);
+    const envelope = await envelopeOf(
+      (client) => void client.captureException(new Error("boom"), { fingerprint: [] }),
+    );
+    expect(envelope).toBeDefined();
+    expect(validate(envelope), describeErrors(validate)).toBe(true);
+    expect(envelope!.items[0]).not.toHaveProperty("fingerprint");
+  });
+
+  test("property が throw する Error でも落とさず、契約どおりの envelope を出す", async () => {
+    // observability が host application を落としてはならない。message getter が throw
+    // すると、captureException が呼び出し元へ throw し、process hook の listener から
+    // 抜けて uncaughtException になり Node は既定でプロセスを落とす。
+    // 型が違う name / message（number など）も、value: string / type: minLength 1 を破る
+    class Hostile extends Error {
+      override get message(): string {
+        throw new Error("message getter exploded");
+      }
+      override get stack(): string {
+        throw new Error("stack getter exploded");
+      }
+      get cause(): unknown {
+        throw new Error("cause getter exploded");
+      }
+    }
+    const wrongTypes = new Error("boom");
+    Object.assign(wrongTypes, { name: 42, message: { toString: () => "not a string" } });
+
+    for (const thrown of [new Hostile(), wrongTypes]) {
+      // getter が throw すれば、この await 自体が落ちる
+      const envelope = await envelopeOf((client) => void client.captureException(thrown));
+      expect(envelope).toBeDefined();
+      expect(validate(envelope), describeErrors(validate)).toBe(true);
+      const value = (envelope!.items[0]!.exception as { values: Array<Record<string, unknown>> })
+        .values[0]!;
+      expect(typeof value.type).toBe("string");
+      expect((value.type as string).length).toBeGreaterThanOrEqual(1);
+      expect(typeof value.value).toBe("string");
+    }
+  });
+
+  test("property が throw する Error は process hook の listener から抜けない", () => {
+    class Hostile extends Error {
+      override get message(): string {
+        throw new Error("message getter exploded");
+      }
+    }
+    const client = createNodeClient({
+      dsn: "https://msk_example@ingest.example.test/1",
+      environment: "production",
+      fetch: async () => new Response(null, { status: 202 }),
+    });
+    const uninstall = client.installProcessHooks({ unhandledRejection: true });
+    const emit = (event: string, ...args: unknown[]) =>
+      (process as unknown as { emit(e: string, ...a: unknown[]): boolean }).emit(event, ...args);
+    try {
+      // listener から throw が抜けると Node では uncaughtException になる
+      expect(() => emit("unhandledRejection", new Hostile(), Promise.resolve())).not.toThrow();
+      expect(() => emit("uncaughtExceptionMonitor", new Hostile())).not.toThrow();
+    } finally {
+      uninstall();
+      void client.close();
+    }
   });
 });
 

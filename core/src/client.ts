@@ -60,7 +60,18 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
     let items: MonicaItem[] | undefined;
     let sentAt = "";
     while (queue.length > 0 && !items) {
-      sentAt = now().toISOString();
+      try {
+        sentAt = now().toISOString();
+      } catch {
+        // A caller-supplied `now` that throws (or returns an invalid Date) leaves
+        // no way to build sent_at, so this batch can never go out. Account for it
+        // as discarded and return: observability must not take the host
+        // application down, and both `void sendBatch()` sites drop the promise,
+        // so a rejection here would surface as an unhandled rejection.
+        discarded += queue.splice(0, Math.min(batchSize, queue.length)).length;
+        scheduleTimer();
+        return false;
+      }
       let count = Math.min(batchSize, queue.length);
       while (count > 0) {
         const candidate = {
@@ -91,8 +102,12 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
     if (!items) return oversizedDrops === 0;
     const reportedDiscarded = discarded;
     discarded = 0;
-    const operation = options.transport
-      .send(
+    // A caller-supplied `transport.send` that throws synchronously would reject
+    // this async function, and both `void sendBatch()` sites drop the promise:
+    // that is an unhandled rejection, which takes a Node process down by
+    // default. Wrapping the call turns it into the rejection path below.
+    const operation = (async () =>
+      options.transport.send(
         {
           sdk,
           sent_at: sentAt,
@@ -100,7 +115,7 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
           items,
         },
         signal,
-      )
+      ))()
       .then((result) => {
         if (!result.accepted) discarded += items.length + reportedDiscarded;
         return result.accepted && oversizedDrops === 0;

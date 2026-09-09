@@ -105,7 +105,7 @@ export function createNodeClient(options: NodeClientOptions): MonicaNodeClient {
       ...(Object.keys(contexts).length ? { contexts } : {}),
       ...(breadcrumbs.length ? { breadcrumbs } : {}),
       ...(context.request ? { request: context.request } : {}),
-      ...(context.fingerprint ? { fingerprint: context.fingerprint } : {}),
+      ...(context.fingerprint?.length ? { fingerprint: context.fingerprint } : {}),
     };
   }
 
@@ -124,18 +124,25 @@ export function createNodeClient(options: NodeClientOptions): MonicaNodeClient {
     context: CaptureContext,
     mechanism: MonicaExceptionValue["mechanism"],
   ): Promise<string | null> {
-    const exception = normalizeException(error, mechanism);
-    return core.capture(
-      {
-        type: "error",
-        platform: "node",
-        level: context.level ?? "error",
-        message: exception.values[0]?.value,
-        exception,
-        ...contextValues(context),
-      },
-      { originalException: error },
-    );
+    try {
+      const exception = normalizeException(error, mechanism);
+      return core.capture(
+        {
+          type: "error",
+          platform: "node",
+          level: context.level ?? "error",
+          message: exception.values[0]?.value,
+          exception,
+          ...contextValues(context),
+        },
+        { originalException: error },
+      );
+    } catch {
+      // Observability must never fail the host application. Throwing here would
+      // reach the caller's catch block, or escape the process hook listeners and
+      // become an uncaughtException that terminates the process.
+      return Promise.resolve(null);
+    }
   }
 
   function captureMessage(
@@ -143,13 +150,17 @@ export function createNodeClient(options: NodeClientOptions): MonicaNodeClient {
     level: CaptureContext["level"] = "info",
     context: Omit<CaptureContext, "level"> = {},
   ): Promise<string | null> {
-    return core.capture({
-      type: "error",
-      platform: "node",
-      level,
-      message,
-      ...contextValues(context),
-    });
+    try {
+      return core.capture({
+        type: "error",
+        platform: "node",
+        level,
+        message,
+        ...contextValues(context),
+      });
+    } catch {
+      return Promise.resolve(null);
+    }
   }
 
   function installProcessHooks(hooks: ProcessHookOptions = {}): () => void {
@@ -206,14 +217,16 @@ function normalizeException(
   while (current !== undefined && current !== null && values.length < 10 && !seen.has(current)) {
     seen.add(current);
     if (current instanceof Error) {
-      const frames = parseStack(current.stack);
+      // name / message / stack / cause は getter でありうる。throw されても、
+      // 型が違っても（value は string、type は minLength: 1）契約を守る
+      const frames = parseStack(readErrorString(current, "stack"));
       values.push({
-        type: current.name || "Error",
-        value: current.message,
+        type: readErrorString(current, "name") || "Error",
+        value: readErrorString(current, "message") ?? "",
         ...(frames.length ? { stacktrace: { frames } } : {}),
         mechanism,
       });
-      current = current.cause;
+      current = readErrorCause(current);
     } else {
       values.push({
         type: typeof current,
@@ -223,6 +236,10 @@ function normalizeException(
       current = undefined;
     }
   }
+  // envelope.json の $defs.exception.values は minItems: 1。captureException(null) や
+  // 素の Promise.reject() を拾った unhandledRejection で空配列を出すと、同じ batch に
+  // 載った他の event ごと envelope 全体が 422 で捨てられる
+  if (values.length === 0) values.push({ type: "Error", value: "Unknown error", mechanism });
   return { values };
 }
 
@@ -245,12 +262,33 @@ function parseStack(stack: string | undefined): MonicaFrame[] {
   return frames.reverse();
 }
 
+function readErrorString(error: Error, key: "message" | "name" | "stack"): string | undefined {
+  try {
+    const value = error[key];
+    return typeof value === "string" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readErrorCause(error: Error): unknown {
+  try {
+    return error.cause;
+  } catch {
+    return undefined;
+  }
+}
+
 function safeString(value: unknown): string {
   if (typeof value === "string") return value;
   try {
     return JSON.stringify(value) ?? String(value);
   } catch {
-    return String(value);
+    try {
+      return String(value);
+    } catch {
+      return "[Unserializable exception]";
+    }
   }
 }
 
