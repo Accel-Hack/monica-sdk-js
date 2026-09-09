@@ -3,7 +3,7 @@
  *
  *   bun run spec:sync            配信元を取得し、spec/v1/ を上書きする
  *   bun run spec:check           取得して比べるだけ。差分があれば exit 1
- *   ... --report <path>          差分の要約を markdown で書き出す（同期 PR の本文用）
+ *   ... --report <path>          差分の要約を markdown で書き出す
  *
  * 配信元は https://spec.monica.accelhack.net/v1/。パスの v1 は Ingest API の版で
  * バンドル自身の版ではないので、中身は変わってよい。どの契約で作ったかを記録して
@@ -14,8 +14,7 @@
  * すべてそこで済む。index.json がまだ配信されていない間は、手元のコピーにある
  * ファイルだけを取り直す（上流で増えたファイルはこの経路では見つからない）。
  *
- * この script は CI の pull_request では回さない。fork からの PR は外部通信の前提が
- * 揃わないため。schedule / workflow_dispatch の spec-sync.yml だけが呼ぶ。
+ * CI（ci.yml の全体チェック）は --check で回し、食い違っていたら落とす。
  */
 import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";

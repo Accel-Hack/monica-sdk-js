@@ -22,12 +22,11 @@ MONICA へ送る envelope の形、上限値、Ingest API の叩き方は、MONI
 この repository は [`spec/v1/`](spec/v1/) にそのコピーを vendoring して持ち、
 各 package の `test/contract.test.ts` がコピーに対して契約テストを回す。
 
-- 契約テストはオフラインで完結する。fork からの PR も手元の clone もそのまま通る
+- 契約テストはコピーに対して走るのでオフラインで完結する
 - パスの `v1` は Ingest API（`POST /v1/envelope`）の版で、バンドル自身の版ではない。
   v1 API が育つあいだ中身は変わってよく、どの契約でこの SDK を作ったかは git の履歴が記録している
-- コピーの更新は [`spec-sync.yml`](.github/workflows/spec-sync.yml) が平日朝に配信元を取得し、
-  違っていれば新しいコピーで契約テストを回して結果を本文に書いた PR を出す。
-  手元で確かめるなら `bun run spec:check`、更新するなら `bun run spec:sync`
+- CI が `bun run spec:check` で配信元と比べ、食い違っていたら落ちる。
+  `bun run spec:sync` でコピーを取り直して commit し、契約テストが通ることを確かめて PR に含める
 - `spec/v1/` を手で編集しない。正本は MONICA 本体にあり、同期で上書きされる
 
 ## 開発
@@ -48,8 +47,7 @@ bun run test:contract    # 契約テストだけ
 
 | workflow | いつ | 何をするか |
 | --- | --- | --- |
-| [`ci.yml`](.github/workflows/ci.yml) | PR と main への push | `bun run check` と、Node 20 / 22 / 24 での `node` / `next` の runtime smoke |
-| [`spec-sync.yml`](.github/workflows/spec-sync.yml) | 平日 09:00 JST と手動 | 公開契約バンドルの差分検査と同期 PR |
+| [`ci.yml`](.github/workflows/ci.yml) | PR と main への push | `bun run check`、`bun run spec:check`、Node 20 / 22 / 24 での `node` / `next` の runtime smoke |
 | [`npm-release.yml`](.github/workflows/npm-release.yml) | `v*` tag | 4 package を npm へ公開 |
 
 ## リリース

@@ -3,8 +3,8 @@ name: ci
 # 4 package（core / node / cloudflare / next）の typecheck・test・pack:check・
 # runtime smoke と、vendoring した公開契約バンドル（spec/v1/）に対する契約テストを回す。
 #
-# 契約テストはコピーに対してオフラインで完結するので、fork からの PR も手元の
-# clone もそのまま通る。配信元との差分検査はここではやらない（spec-sync.yml）。
+# spec/v1/ が配信元 https://spec.monica.accelhack.net/v1/ と食い違っていたら
+# ここで落とす。直すのは bun run spec:sync でコピーを取り直して commit する。
 
 on:
   pull_request:
@@ -40,6 +40,9 @@ jobs:
       # pack:check が公開物の中身も検証する
       - name: 4 package と tooling を確認
         run: bun run check
+
+      - name: 公開契約バンドルのコピーが配信元と一致しているか
+        run: bun run spec:check
 
   node:
     name: Node SDK / Node ${{ matrix.node }}
