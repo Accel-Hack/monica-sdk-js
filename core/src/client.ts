@@ -157,6 +157,11 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
         item = processed;
       }
 
+      // The adapters drop these while building the item, but beforeSend runs
+      // afterwards and core.capture is a published entry point, so neither path
+      // is covered by that guard.
+      item = withoutEmptyContractArrays(item);
+
       if (queue.length >= maxQueueSize) {
         queue.shift();
         discarded += 1;
@@ -199,6 +204,31 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
   }
 
   return { capture, flush, close };
+}
+
+/**
+ * Drop the two empty arrays the wire contract forbids: `fingerprint` and
+ * `exception.values` are the only `minItems: 1` constraints on an error item,
+ * and a `422` discards the whole envelope, so one such item takes every
+ * unrelated event batched alongside it down with it. Both fields are optional,
+ * so dropping them lets the event through.
+ *
+ * This is not payload validation — choosing what to send stays with the
+ * application (see beforeSend). It only removes values that could never reach
+ * MONICA and would destroy other events on the way out.
+ */
+function withoutEmptyContractArrays(item: MonicaItem): MonicaItem {
+  const emptyFingerprint = Array.isArray(item.fingerprint) && item.fingerprint.length === 0;
+  const emptyValues =
+    item.exception !== undefined &&
+    Array.isArray(item.exception.values) &&
+    item.exception.values.length === 0;
+  if (!emptyFingerprint && !emptyValues) return item;
+  // beforeSend may hand back an object the application still holds onto.
+  const copy = { ...item };
+  if (emptyFingerprint) delete copy.fingerprint;
+  if (emptyValues) delete copy.exception;
+  return copy;
 }
 
 function assertOptions(options: CoreClientOptions): void {

@@ -21,6 +21,7 @@ import {
   readEnvelopeSchema,
   readEnvelopeVectors,
   readLimits,
+  type JsonObject,
 } from "../../tooling/contract.js";
 import {
   createCoreClient,
@@ -446,5 +447,112 @@ describe("public contract: 利用者が渡した関数が throw しても落ち�
       expect(result.discarded).toBe(1);
       expect(result.remaining).toBe(0);
     });
+  });
+});
+
+/**
+ * adapter の guard は item を組む段階、beforeSend はその後。core.capture 自体も
+ * 公開 export なので、どちらも adapter を通らない。envelope の 422 は envelope
+ * 単位なので、1 件の item が同じ batch の無関係な event を全部道連れにする。
+ */
+describe("public contract: 契約が禁じる空配列は adapter の外でも載せない", () => {
+  test("errorItem の minItems: 1 は fingerprint と exception.values だけ", () => {
+    const errorItem = definition(schema, "errorItem");
+    const constrained = Object.entries(errorItem.properties as Record<string, JsonObject>)
+      .filter(([, rule]) => rule.minItems !== undefined)
+      .map(([name]) => name);
+    expect(constrained).toEqual(["fingerprint"]);
+    expect(
+      (definition(schema, "exception").properties as Record<string, JsonObject>).values!.minItems,
+    ).toBe(1);
+    // どちらも optional なので、落としても item は契約を満たす
+    const required = errorItem.required as string[];
+    expect(required).not.toContain("fingerprint");
+    expect(required).not.toContain("exception");
+  });
+
+  test("beforeSend が空にした fingerprint / exception.values は載せない", async () => {
+    const envelopes: MonicaEnvelope[] = [];
+    const client = createCoreClient({
+      transport: recordingTransport(envelopes),
+      environment: "production",
+      beforeSend(item) {
+        // 「許可した fingerprint だけ残す」ような、ごく普通の beforeSend
+        if (item.fingerprint) {
+          item.fingerprint = item.fingerprint.filter((value) => value.startsWith("allowed:"));
+        }
+        if (item.exception) item.exception = { values: [] };
+        return item;
+      },
+    });
+    await client.capture({ ...fullItem(), fingerprint: ["denied:x"] });
+    await client.flush();
+
+    expect(envelopes).toHaveLength(1);
+    expect(validate(envelopes[0]), describeErrors(validate)).toBe(true);
+    const item = envelopes[0]!.items[0]!;
+    expect(item).not.toHaveProperty("fingerprint");
+    expect(item).not.toHaveProperty("exception");
+  });
+
+  test("core.capture を直接呼んだ場合も載せない", async () => {
+    const envelopes: MonicaEnvelope[] = [];
+    const client = createCoreClient({
+      transport: recordingTransport(envelopes),
+      environment: "production",
+    });
+    await client.capture({
+      type: "error",
+      platform: "node",
+      level: "error",
+      message: "boom",
+      fingerprint: [],
+      exception: { values: [] },
+    });
+    await client.flush();
+
+    expect(validate(envelopes[0]), describeErrors(validate)).toBe(true);
+    expect(envelopes[0]!.items[0]).not.toHaveProperty("fingerprint");
+    expect(envelopes[0]!.items[0]).not.toHaveProperty("exception");
+  });
+
+  test("中身のある fingerprint / exception はそのまま載せる", async () => {
+    const envelopes: MonicaEnvelope[] = [];
+    const client = createCoreClient({
+      transport: recordingTransport(envelopes),
+      environment: "production",
+    });
+    await client.capture(fullItem());
+    await client.flush();
+
+    const item = envelopes[0]!.items[0]!;
+    expect(item.fingerprint).toEqual(["custom", "group"]);
+    expect((item.exception as { values: unknown[] }).values).toHaveLength(2);
+  });
+
+  test("空配列 1 件で、同じ batch の無関係な event が消えない", async () => {
+    // 422 は envelope 単位。修正前は無関係な 4 件ごと捨てられていた
+    const envelopes: MonicaEnvelope[] = [];
+    const client = createCoreClient({
+      transport: recordingTransport(envelopes),
+      environment: "production",
+      batchSize: 5,
+      flushIntervalMs: 60_000,
+    });
+    for (const n of [1, 2, 3, 4]) {
+      await client.capture({ type: "error", platform: "node", level: "error", message: `${n}` });
+    }
+    await client.capture({
+      type: "error",
+      platform: "node",
+      level: "error",
+      message: "empty fingerprint",
+      fingerprint: [],
+    });
+    expect(await client.flush()).toEqual({ accepted: true, discarded: 0, remaining: 0 });
+
+    expect(envelopes).toHaveLength(1);
+    expect(envelopes[0]!.items).toHaveLength(5);
+    expect(validate(envelopes[0]), describeErrors(validate)).toBe(true);
   });
 });
