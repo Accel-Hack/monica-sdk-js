@@ -109,6 +109,11 @@ export interface TransportResult {
   issues?: TransportIssue[];
   /** 4xx のレスポンス body から読めた `error.code` / `error.message`。 */
   error?: TransportError;
+  /**
+   * transport.json の `drop_and_stop`（401）。これを受けた client は以後送信しない。
+   * 鍵が失効した長寿命プロセスが永久に POST し続けるのを止めるための欄。
+   */
+  stop?: boolean;
 }
 
 /**
@@ -170,6 +175,12 @@ export interface FlushResult {
   issues?: TransportIssue[];
   /** その送信で読めた `error.code` / `error.message`。 */
   error?: TransportError;
+  /**
+   * 401（`drop_and_stop`）を受けて client が閉じたあとは `true`。閉じたあとの
+   * `capture` は `null` を返し、queue に残っていた分は `discarded` に勘定される。
+   * 一度立つと戻らないので、`status` と違って flush をまたいで残る。
+   */
+  stopped?: boolean;
 }
 
 export interface MonicaCoreClient {

@@ -22,6 +22,7 @@ import {
   readEnvelopeSchema,
   readEnvelopeVectors,
   readLimits,
+  readTransportContract,
   type JsonObject,
 } from "../../tooling/contract.js";
 import {
@@ -38,6 +39,7 @@ const schema = await readEnvelopeSchema();
 const limits = await readLimits();
 const validate = await compileEnvelopeValidator();
 const validateError = await compileErrorValidator();
+const transportContract = await readTransportContract();
 const packageMetadata = (await Bun.file(new URL("../package.json", import.meta.url)).json()) as {
   name: string;
   version: string;
@@ -345,7 +347,12 @@ describe("public contract: ingest HTTP", () => {
           return new Response(null, { status });
         },
       });
-      expect(await transport.send(envelope)).toEqual({ accepted: false, status });
+      expect(await transport.send(envelope)).toEqual({
+        accepted: false,
+        status,
+        // 401 は drop_and_stop なので「以後止める」も返る（下の status 表のテスト）
+        ...(status === 401 ? { stop: true } : {}),
+      });
       expect(attempts, `status ${status}`).toBe(1);
     }
   });
@@ -690,10 +697,11 @@ describe("public contract: 4xx の error body（error.json）", () => {
     expect(result.status).toBe(422);
   });
 
-  test("422 以外の 4xx は警告を出さず、破棄も再送しないまま変わらない", async () => {
+  // 401 は「以後止めた」ことを 1 回だけ警告する（下の status 表のテスト）
+  test("422 / 401 以外の 4xx は警告を出さず、破棄も再送しないまま変わらない", async () => {
     const warn = capturingWarn();
     try {
-      for (const status of [400, 401, 404]) {
+      for (const status of [400, 404]) {
         const { transport, attempts } = transportReturning(
           status,
           JSON.stringify({ error: { code: "bad_request", message: "nope" } }),
@@ -994,4 +1002,312 @@ describe("public contract: 契約が禁じる空配列は adapter の外でも�
     expect(envelopes[0]!.items).toHaveLength(5);
     expect(validate(envelopes[0]), describeErrors(validate)).toBe(true);
   });
+});
+
+/**
+ * transport.json の `status` 表を読み、status ごとの挙動を固定する。
+ * `action` の語彙（`accept` / `drop` / `drop_and_stop` / `split_and_retry` /
+ * `wait_retry_after` / `backoff`）は公開契約の一部なので、契約側に status が
+ * 増えたらこのテストが落ちて実装を促す。
+ */
+describe("public contract: transport.json の status ごとの挙動", () => {
+  const envelope: MonicaEnvelope = {
+    sdk: { name: "@ah-monica/core", version: "0.0.0-test" },
+    sent_at: "2026-08-29T00:00:00.000Z",
+    discarded: 0,
+    items: [],
+  };
+  const dsn = "https://msk_example@ingest.example.test/42";
+
+  function itemNamed(message: string): CaptureItemInput {
+    return { type: "error", platform: "node", level: "error", message };
+  }
+
+  test("契約の status 表が、この SDK が実装している action だけで出来ている", () => {
+    // 消す・変えるのは破壊的変更。増えたらここが落ちて実装漏れが見える
+    expect(transportContract.status).toEqual({
+      "202": "accept",
+      "400": "drop",
+      "401": "drop_and_stop",
+      "413": "split_and_retry",
+      "422": "drop",
+      "429": "wait_retry_after",
+      "5xx": "backoff",
+    });
+    expect(transportContract.retry.retryable_statuses).toEqual(["429", "5xx"]);
+  });
+
+  test("accept（202）: 受理して 1 回で終わる", async () => {
+    let attempts = 0;
+    const transport = createFetchTransport({
+      dsn,
+      maxRetries: 3,
+      fetch: async () => {
+        attempts += 1;
+        return new Response(null, { status: 202 });
+      },
+    });
+    expect(await transport.send(envelope)).toEqual({ accepted: true, status: 202 });
+    expect(attempts).toBe(1);
+  });
+
+  test("drop（400 / 422）: 破棄して再送せず、以後の送信は止めない", async () => {
+    for (const status of [400, 422]) {
+      let attempts = 0;
+      const transport = createFetchTransport({
+        dsn,
+        maxRetries: 3,
+        onDiagnostic: null,
+        fetch: async () => {
+          attempts += 1;
+          return new Response(null, { status });
+        },
+      });
+      const first = await transport.send(envelope);
+      expect(first.accepted, `status ${status}`).toBe(false);
+      expect(first.stop, `status ${status}`).toBeUndefined();
+      // 止まらないので次の送信は POST される
+      await transport.send(envelope);
+      expect(attempts, `status ${status}`).toBe(2);
+    }
+  });
+
+  test("drop_and_stop（401）: stop を返し、以後 POST しない", async () => {
+    let attempts = 0;
+    const transport = createFetchTransport({
+      dsn,
+      maxRetries: 3,
+      fetch: async () => {
+        attempts += 1;
+        return new Response(null, { status: 401 });
+      },
+    });
+    expect(await transport.send(envelope)).toEqual({ accepted: false, status: 401, stop: true });
+    expect(attempts).toBe(1);
+    // 鍵が失効した長寿命プロセスが永久に POST し続けないこと
+    expect(await transport.send(envelope)).toEqual({ accepted: false, status: 401, stop: true });
+    expect(attempts).toBe(1);
+  });
+
+  test("drop_and_stop（401）: 止めたことを既定で 1 回だけ警告する", async () => {
+    const warned: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => warned.push(args.map(String).join(" "));
+    try {
+      const transport = createFetchTransport({
+        dsn,
+        maxRetries: 3,
+        fetch: async () =>
+          new Response(JSON.stringify({ error: { code: "invalid_key", message: "revoked" } }), {
+            status: 401,
+          }),
+      });
+      await transport.send(envelope);
+      await transport.send(envelope);
+      // 止めたあとは POST もしないので警告も増えない
+      expect(warned).toEqual([
+        "monica: ingest rejected the envelope with 401 (invalid_key); no further envelopes will be sent",
+      ]);
+    } finally {
+      console.warn = original;
+    }
+  });
+
+  test("drop_and_stop（401）: body が読めなくても 1 行警告する", async () => {
+    const seen: string[] = [];
+    const transport = createFetchTransport({
+      dsn,
+      maxRetries: 3,
+      onDiagnostic: (diagnostic) => seen.push(diagnostic.message),
+      fetch: async () => new Response(null, { status: 401 }),
+    });
+    await transport.send(envelope);
+    expect(seen).toEqual([
+      "monica: ingest rejected the envelope with 401 (unknown); no further envelopes will be sent",
+    ]);
+  });
+
+  test("drop_and_stop（401）: client は閉じ、以後 capture は null を返す", async () => {
+    let posts = 0;
+    const client = createCoreClient({
+      environment: "production",
+      // flush まで送らせない。401 を受ける瞬間を 1 か所に固定する
+      batchSize: 10,
+      maxQueueSize: 10,
+      flushIntervalMs: 60_000,
+      transport: {
+        async send() {
+          posts += 1;
+          return { accepted: false, status: 401, stop: true };
+        },
+      },
+    });
+    for (const n of [1, 2, 3]) await client.capture(itemNamed(`${n}`));
+    const result = await client.flush();
+
+    expect(posts).toBe(1);
+    expect(result).toEqual({
+      accepted: false,
+      discarded: 3,
+      remaining: 0,
+      status: 401,
+      stopped: true,
+    });
+
+    // 閉じたことは capture の戻り値でも分かる
+    expect(await client.capture(itemNamed("after"))).toBeNull();
+    const second = await client.flush();
+    // 鍵は失効したまま。以後 1 回も POST しない
+    expect(posts).toBe(1);
+    expect(second.stopped).toBe(true);
+    expect(second.accepted).toBe(false);
+  });
+
+  test("drop_and_stop（401）: queue に残っていた分も discarded に勘定する", async () => {
+    let posts = 0;
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const client = createCoreClient({
+      environment: "production",
+      batchSize: 2,
+      maxQueueSize: 10,
+      flushIntervalMs: 60_000,
+      transport: {
+        async send() {
+          posts += 1;
+          // 401 が返るまでに queue へ積ませる
+          await gate;
+          return { accepted: false, status: 401, stop: true };
+        },
+      },
+    });
+    // 最初の 2 件で送信が始まり、残りは queue に積まれる
+    for (const n of [1, 2, 3, 4, 5]) await client.capture(itemNamed(`${n}`));
+    release?.();
+    const result = await client.flush();
+
+    expect(posts).toBe(1);
+    // 送った 2 件と、二度と送れない queue の 3 件
+    expect(result).toEqual({
+      accepted: false,
+      discarded: 5,
+      remaining: 0,
+      status: 401,
+      stopped: true,
+    });
+  });
+
+  test("split_and_retry（413）: transport は分割せず client に返す", async () => {
+    let attempts = 0;
+    const transport = createFetchTransport({
+      dsn,
+      maxRetries: 3,
+      fetch: async () => {
+        attempts += 1;
+        return new Response(null, { status: 413 });
+      },
+    });
+    const result = await transport.send(envelope);
+    expect(result.accepted).toBe(false);
+    expect(result.status).toBe(413);
+    expect(result.stop).toBeUndefined();
+    // 同じ envelope をそのまま再送しても意味が無い。分割は client が行う
+    expect(attempts).toBe(1);
+  });
+
+  test("split_and_retry（413）: client が item 単位で半分に割って送り直す", async () => {
+    const delivered: MonicaEnvelope[] = [];
+    const client = createCoreClient({
+      environment: "production",
+      batchSize: 8,
+      maxQueueSize: 8,
+      flushIntervalMs: 60_000,
+      transport: {
+        async send(sent) {
+          // サーバ側の上限が縮んで 3 件以上が入らなくなった状態
+          if (sent.items.length > 2) return { accepted: false, status: 413 };
+          delivered.push(sent);
+          return { accepted: true, status: 202 };
+        },
+      },
+    });
+    for (let index = 0; index < 8; index += 1) await client.capture(itemNamed(`${index}`));
+    expect(await client.flush()).toEqual({ accepted: true, discarded: 0, remaining: 0 });
+
+    // 8 -> 4+4 -> 2+2+2+2。item は分かれず、順番も保たれる
+    expect(delivered.map((sent) => sent.items.length)).toEqual([2, 2, 2, 2]);
+    expect(delivered.flatMap((sent) => sent.items.map((item) => item.message))).toEqual([
+      "0",
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+    ]);
+    for (const sent of delivered) expect(validate(sent), describeErrors(validate)).toBe(true);
+  });
+
+  test("split_and_retry（413）: 1 件でも 413 なら捨てて discarded に勘定する", async () => {
+    let posts = 0;
+    const client = createCoreClient({
+      environment: "production",
+      batchSize: 2,
+      maxQueueSize: 2,
+      flushIntervalMs: 60_000,
+      transport: {
+        async send() {
+          posts += 1;
+          return { accepted: false, status: 413 };
+        },
+      },
+    });
+    for (const n of [1, 2]) await client.capture(itemNamed(`${n}`));
+    // 2 件 -> 1 件 + 1 件 まで割って、それでも 413 なら諦める（無限に割らない）
+    expect(await client.flush()).toEqual({
+      accepted: false,
+      discarded: 2,
+      remaining: 0,
+      status: 413,
+    });
+    expect(posts).toBe(3);
+  });
+
+  test("wait_retry_after（429）: Retry-After を待って再送する", async () => {
+    let attempts = 0;
+    const transport = createFetchTransport({
+      dsn,
+      maxRetries: 2,
+      fetch: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return new Response(null, { status: 429, headers: { "Retry-After": "0" } });
+        }
+        return new Response(null, { status: 202 });
+      },
+    });
+    expect(await transport.send(envelope)).toEqual({ accepted: true, status: 202 });
+    expect(attempts).toBe(2);
+  });
+
+  test("backoff（5xx）: backoff して再送する", async () => {
+    let attempts = 0;
+    const transport = createFetchTransport({
+      dsn,
+      maxRetries: 2,
+      fetch: async () => {
+        attempts += 1;
+        if (attempts === 1) return new Response(null, { status: 503 });
+        return new Response(null, { status: 202 });
+      },
+    });
+    const started = Date.now();
+    expect(await transport.send(envelope)).toEqual({ accepted: true, status: 202 });
+    expect(attempts).toBe(2);
+    // base_ms 1000 に 50〜100% の jitter
+    expect(Date.now() - started).toBeGreaterThanOrEqual(
+      transportContract.retry.backoff.base_ms * transportContract.retry.backoff.jitter_min,
+    );
+  }, 10_000);
 });

@@ -99,6 +99,13 @@ monica: ingest rejected the envelope with 422 (invalid_envelope): 1 issue(s); $.
 browserのconsoleに出したくない場合は`onDiagnostic`を渡して差し替える（`null`で無効化）。
 `flush()`の戻り値の`status` / `issues` / `error`からも取得できる。
 
+`401`（public keyの失効、許可originの不一致）を受けた場合は破棄したうえで、以後
+そのclientからは送信しない。`flush()`の戻り値の`stopped: true`と次の1行で分かる。
+
+```
+monica: ingest rejected the envelope with 401 (invalid_key); no further envelopes will be sent
+```
+
 ## PII
 
 SDKはPIIを推測して除去しない。アプリケーションが`beforeSend`で削除・マスク・破棄する。
