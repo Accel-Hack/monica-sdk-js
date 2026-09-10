@@ -70,6 +70,11 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
     stopped = true;
     closed = true;
     clearTimer();
+    dropQueue();
+  }
+
+  /** 送る先が無くなった queue を捨てて、捨てた分として勘定する */
+  function dropQueue(): void {
     discarded += queue.length;
     queue.length = 0;
   }
@@ -99,7 +104,8 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
       discarded += items.length + reportedDiscarded;
       return false;
     }
-    if (result.stop) stopSending();
+    // 自前 transport が stop を返さなくても、契約（drop_and_stop）どおり止める
+    if (result.stop || result.status === 401) stopSending();
     if (result.accepted) return true;
     if (result.status === 413 && items.length > 1 && !stopped) {
       // 分割の境界は item（ingest.md）。捨てた分の勘定は前半の envelope にだけ載せ、
@@ -116,7 +122,12 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
 
   async function sendBatch(signal?: AbortSignal): Promise<boolean> {
     if (sending) return sending;
-    if (stopped) return false;
+    if (stopped) {
+      // 停止と競合した capture が item を残していることがある。送る先が無いので
+      // 捨てて勘定する。残すと flush が deadline まで空回りする
+      dropQueue();
+      return false;
+    }
     if (queue.length === 0) return true;
     clearTimer();
     let oversizedDrops = 0;
@@ -206,6 +217,13 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
       // is covered by that guard.
       item = withoutEmptyContractArrays(item);
 
+      // beforeSend を待っているあいだに 401 で閉じることがある。閉じたあとに
+      // queue へ積むと二度と送れない item が残り、flush が deadline まで空回りする
+      if (stopped) {
+        discarded += 1;
+        return null;
+      }
+
       if (queue.length >= maxQueueSize) {
         queue.shift();
         discarded += 1;
@@ -247,7 +265,7 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
       const completed = await withTimeout(Promise.allSettled([...pendingCaptures]), remaining);
       if (!completed) return flushResult(false);
     }
-    while (queue.length > 0 || sending) {
+    while ((queue.length > 0 || sending) && !stopped) {
       const remaining = deadline - Date.now();
       if (remaining <= 0) return flushResult(false);
       const operation = sending ?? sendBatch();

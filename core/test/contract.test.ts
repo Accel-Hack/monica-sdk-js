@@ -1197,6 +1197,77 @@ describe("public contract: transport.json の status ごとの挙動", () => {
     });
   });
 
+  test("drop_and_stop（401）: 停止と並行していた capture が queue に残らない", async () => {
+    // beforeSend を待っているあいだに 401 が返る競合。item を queue に残すと
+    // 二度と送れないものが remaining に居座り、flush が deadline まで空回りする
+    let releaseSend: (() => void) | undefined;
+    const sendGate = new Promise<void>((resolve) => (releaseSend = resolve));
+    let releaseBeforeSend: (() => void) | undefined;
+    const beforeSendGate = new Promise<void>((resolve) => (releaseBeforeSend = resolve));
+    let posts = 0;
+    const client = createCoreClient({
+      environment: "production",
+      batchSize: 1,
+      maxQueueSize: 10,
+      flushIntervalMs: 60_000,
+      async beforeSend(item) {
+        if (item.message === "concurrent") await beforeSendGate;
+        return item;
+      },
+      transport: {
+        async send() {
+          posts += 1;
+          await sendGate;
+          return { accepted: false, status: 401, stop: true };
+        },
+      },
+    });
+
+    await client.capture(itemNamed("first"));
+    const concurrent = client.capture(itemNamed("concurrent"));
+    releaseSend?.();
+    // 401 を先に着地させてから、待っていた capture を進める
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    releaseBeforeSend?.();
+
+    // 閉じたあとに組み上がった item は捨てられ、capture は null を返す
+    expect(await concurrent).toBeNull();
+
+    const started = Date.now();
+    const result = await client.flush(300);
+    expect(result).toEqual({
+      accepted: false,
+      discarded: 2,
+      remaining: 0,
+      status: 401,
+      stopped: true,
+    });
+    // deadline まで空回りしない
+    expect(Date.now() - started).toBeLessThan(100);
+    expect(posts).toBe(1);
+  });
+
+  test("drop_and_stop（401）: stop を返さない transport でも status で止まる", async () => {
+    let posts = 0;
+    const client = createCoreClient({
+      environment: "production",
+      batchSize: 10,
+      flushIntervalMs: 60_000,
+      transport: {
+        async send() {
+          posts += 1;
+          // 自前 transport が stop を載せない場合でも契約どおり止める
+          return { accepted: false, status: 401 };
+        },
+      },
+    });
+    await client.capture(itemNamed("one"));
+    const result = await client.flush();
+    expect(result.stopped).toBe(true);
+    expect(await client.capture(itemNamed("two"))).toBeNull();
+    expect(posts).toBe(1);
+  });
+
   test("split_and_retry（413）: transport は分割せず client に返す", async () => {
     let attempts = 0;
     const transport = createFetchTransport({

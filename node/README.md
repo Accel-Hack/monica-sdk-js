@@ -72,7 +72,8 @@ monica: ingest rejected the envelope with 401 (invalid_key); no further envelope
 ```
 
 止まったあとの`captureException` / `captureMessage`は`null`を返し、queueに残っていた
-分は`flush()`の戻り値の`discarded`に勘定される。`stopped: true`で判定できる。
+分（停止と同時に進行していた`beforeSend`の分も含む）は`flush()`の戻り値の
+`discarded`に勘定される。`stopped: true`で判定できる。
 送信を再開するには正しい鍵で`createNodeClient`を呼び直す。
 
 ## PII方針

@@ -56,8 +56,9 @@ if (result.status === 422) {
 ### 401 で送信を止める
 
 `401` を受けると transport はそれ以降 POST せず、client は閉じる。以後の `capture` は
-`null` を返し、queue に残っていた分は `discarded` に勘定される。止めたことは既定で
-1 回だけ警告し、`FlushResult.stopped` でも分かる。
+`null` を返し、queue に残っていた分（停止と同時に `beforeSend` を待っていた分も含む）は
+`discarded` に勘定される。止めたことは既定で 1 回だけ警告し、`FlushResult.stopped` でも
+分かる。`stop` を返さない自前 transport でも、`401` を返せば同じように止まる。
 
 ```
 monica: ingest rejected the envelope with 401 (invalid_key); no further envelopes will be sent
