@@ -34,6 +34,7 @@ export function createNextClient(options: NextClientOptions): MonicaNextClient {
       fetch: options.fetch,
       maxRetries: options.maxRetries,
       requestTimeoutMs: options.requestTimeoutMs,
+      onDiagnostic: options.onDiagnostic,
     }),
     environment: options.environment,
     release: options.release,

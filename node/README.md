@@ -40,6 +40,28 @@ await monica.flush(2_000);
 await monica.close(2_000);
 ```
 
+## 送信が拒否されたとき
+
+`422`（envelope schema 不正）のとき、既定で`console.warn`へ1行出す。
+
+```
+monica: ingest rejected the envelope with 422 (invalid_envelope): 1 issue(s); $.items[0].request.method: Invalid type: Expected string
+```
+
+自前のloggerへ流す場合は`onDiagnostic`を渡す。`null`を渡すと何も出さない。
+
+```ts
+export const monica = createNodeClient({
+  dsn: process.env.MONICA_DSN!,
+  environment: process.env.NODE_ENV ?? "development",
+  onDiagnostic(diagnostic) {
+    logger.warn(diagnostic.message, { issues: diagnostic.issues });
+  },
+});
+```
+
+`flush()`の戻り値の`status` / `issues` / `error`からも取得できる。
+
 ## PII方針
 
 SDKは、文字列やオブジェクトがPIIかどうかを推測せず、自動除去もしない。

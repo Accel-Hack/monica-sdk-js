@@ -83,10 +83,50 @@ export type BeforeSend = (
   hint: CaptureHint,
 ) => MonicaItem | null | Promise<MonicaItem | null>;
 
+/** error.json の `error.issues[]`。ingest が返す field-level の診断 1 件。 */
+export interface TransportIssue {
+  path: string;
+  message: string;
+}
+
+/**
+ * error.json の `error` のうち `issues` を除いた部分。`code` は人が読むためのもので、
+ * SDK の分岐は HTTP status で行う（ingest.md）。
+ */
+export interface TransportError {
+  code: string;
+  message: string;
+}
+
 export interface TransportResult {
   accepted: boolean;
   status?: number;
+  /**
+   * 422 のレスポンス body から読めた `error.issues`。読めなかった場合（body が空・
+   * 非 JSON・上限超過・形が違う）は欄ごと無い。破棄の判断は status で行うので、
+   * この欄の有無で挙動は変わらない。
+   */
+  issues?: TransportIssue[];
+  /** 4xx のレスポンス body から読めた `error.code` / `error.message`。 */
+  error?: TransportError;
 }
+
+/**
+ * ingest が envelope を拒否したときに 1 envelope につき 1 回渡される診断。
+ * retry のたびには渡さない。
+ */
+export interface TransportDiagnostic {
+  status: number;
+  issues: TransportIssue[];
+  error?: TransportError;
+  /**
+   * 既定の警告出力に使う 1 行。API key や envelope 本体は含まない
+   * （`path` と `message` は ingest が返した検証結果そのもの）。
+   */
+  message: string;
+}
+
+export type TransportDiagnosticHandler = (diagnostic: TransportDiagnostic) => void;
 
 export interface MonicaTransport {
   send(envelope: MonicaEnvelope, signal?: AbortSignal): Promise<TransportResult>;
@@ -121,6 +161,15 @@ export interface FlushResult {
   accepted: boolean;
   discarded: number;
   remaining: number;
+  /**
+   * 直前に受理されなかった送信の HTTP status。前回 flush 以降に受理されなかった
+   * 送信が無い場合、または network 障害で status が無い場合は欄ごと無い。
+   */
+  status?: number;
+  /** その送信で読めた `error.issues`（実質 422 のみ）。 */
+  issues?: TransportIssue[];
+  /** その送信で読めた `error.code` / `error.message`。 */
+  error?: TransportError;
 }
 
 export interface MonicaCoreClient {

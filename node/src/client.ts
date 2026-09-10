@@ -35,6 +35,7 @@ export function createNodeClient(options: NodeClientOptions): MonicaNodeClient {
       fetch: options.fetch,
       maxRetries: options.maxRetries,
       requestTimeoutMs: options.requestTimeoutMs,
+      onDiagnostic: options.onDiagnostic,
     }),
     environment: options.environment,
     release: options.release,

@@ -21,5 +21,9 @@ export type {
   MonicaRequest,
   MonicaTransport,
   MonicaUser,
+  TransportDiagnostic,
+  TransportDiagnosticHandler,
+  TransportError,
+  TransportIssue,
   TransportResult,
 } from "./types.js";

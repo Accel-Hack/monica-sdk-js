@@ -35,6 +35,7 @@ export function createCloudflareClient(
       fetch: options.fetch,
       maxRetries: options.maxRetries ?? 0,
       requestTimeoutMs: options.requestTimeoutMs,
+      onDiagnostic: options.onDiagnostic,
     }),
     environment: options.environment,
     release: options.release,

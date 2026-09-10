@@ -29,6 +29,14 @@ MONICA へ送る envelope の形、上限値、Ingest API の叩き方は、MONI
   `bun run spec:sync` でコピーを取り直して commit し、契約テストが通ることを確かめて PR に含める
 - `spec/v1/` を手で編集しない。正本は MONICA 本体にあり、同期で上書きされる
 
+### 拒否されたときの診断
+
+`422`（envelope schema 不正）のとき、4 package は ingest が返す
+[`error.json`](spec/v1/error.json) の body を読み、既定で `console.warn` に 1 行出す。
+差し替え・無効化は `onDiagnostic`（既定 `console.warn`、`null` で無効）。読めた内容は
+`flush()` の戻り値の `status` / `issues` / `error` から取れる。文面と欄の詳細は
+[`core/README.md`](core/README.md)。
+
 ## 開発
 
 ```bash

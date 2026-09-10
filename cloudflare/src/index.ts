@@ -14,4 +14,6 @@ export type {
   MonicaLevel,
   MonicaRequest,
   MonicaUser,
+  TransportDiagnostic,
+  TransportDiagnosticHandler,
 } from "@ah-monica/core";

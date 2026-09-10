@@ -51,6 +51,40 @@ export async function readLimits(): Promise<Limits> {
   return readSpecJson<Limits>("limits.json");
 }
 
+/** transport.json。`status` は HTTP status の文字列（`5xx` のような範囲を含む）から action へ */
+export interface TransportContract {
+  status: Record<string, string>;
+  retry: {
+    retryable_statuses: string[];
+    retry_on_network_error: boolean;
+    retry_after: { integer_seconds_only: boolean; max_seconds: number };
+    backoff: {
+      base_ms: number;
+      factor: number;
+      max_ms: number;
+      jitter_min: number;
+      jitter_max: number;
+    };
+  };
+}
+
+export async function readTransportContract(): Promise<TransportContract> {
+  return readSpecJson<TransportContract>("transport.json");
+}
+
+export async function readErrorSchema(): Promise<JsonObject> {
+  return readSpecJson<JsonObject>("error.json");
+}
+
+/**
+ * error.json を compile した validator。4xx の body を組んだ fixture が、
+ * 実際に ingest が返す形（公開契約）から外れていないことを確かめるために使う。
+ */
+export async function compileErrorValidator(): Promise<ValidateFunction> {
+  const ajv = new Ajv2020({ strict: true, allErrors: true, validateFormats: false });
+  return ajv.compile(await readErrorSchema());
+}
+
 export async function readEnvelopeVectors(): Promise<Array<EnvelopeVector & { file: string }>> {
   const directory = resolve(SPEC_DIR, "vectors", "envelope");
   const files = readdirSync(directory).filter((name) => name.endsWith(".json")).sort();
