@@ -1,6 +1,6 @@
 {
   "name": "@ah-monica/core",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Runtime-neutral transport and buffering core for the MONICA SDK",
   "license": "Apache-2.0",
   "type": "module",
