@@ -8,21 +8,19 @@ Node.js アプリでは `@ah-monica/node` を使う。
 
 ## 拒否されたときの診断（422 の `issues`）
 
-ingest は envelope schema に合わない envelope を `422` で破棄し、body に
-どの欄が悪いかを [`error.json`](../spec/v1/error.json) の形で返す。SDK は
-`429` を除く 4xx でこの body を読み（上限 64 KiB、読めなければ黙って諦める）、
-`422` のときは **既定で** `console.warn` に 1 行出す。
+`429` を除く 4xx では、ingest が返す body（[`error.json`](../spec/v1/error.json)）を
+読み取り上限 64 KiB で読む。body が空・非 JSON・上限超過・`error.json` に適合しない
+場合は issues 無しで破棄する。`422` は既定で `console.warn` に 1 行出す。
 
 ```
 monica: ingest rejected the envelope with 422 (invalid_envelope): 1 issue(s); $.items[0].request.method: Invalid type: Expected string
 ```
 
-`beforeSend` で allowlist を組むと必須欄（例: `request` があるなら `method`）を
-落としてしまうことがあり、この警告が無いと「送っているのに 1 件も届かない」状態に
-気づけない。API key と envelope 本体はログに出さない。
+`error.code` が読めないときは `(unknown)`、`issues` が無いときは `0 issue(s)` になる。
+API key と envelope 本体はログに出さない。
 
-出力先は `createFetchTransport` の `onDiagnostic` で差し替えられる。`null` を渡すと
-何も出さない（結果に載る `issues` は残る）。
+出力先は `createFetchTransport` の `onDiagnostic` で差し替える。既定は
+`console.warn`、`null` で無効（結果の `issues` は残る）。
 
 ```ts
 createFetchTransport({
@@ -33,8 +31,8 @@ createFetchTransport({
 });
 ```
 
-読めた内容は送信結果にも載る。`TransportResult` と `FlushResult` の
-`status` / `issues` / `error` は後方互換な追加で、拒否が無ければ欄ごと現れない。
+読めた内容は `TransportResult` と `FlushResult` の `status` / `issues` / `error`
+に載る（値があるときだけ現れる）。
 
 ```ts
 const result = await client.flush(2_000);
@@ -42,7 +40,3 @@ if (result.status === 422) {
   for (const issue of result.issues ?? []) console.log(issue.path, issue.message);
 }
 ```
-
-破棄・再送の判断は従来どおり HTTP status だけで行う（`error.code` では分岐しない）。
-body が空・非 JSON・上限超過・`error.json` に適合しない場合も、例外を投げず
-従来どおり破棄で終わる。

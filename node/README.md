@@ -42,16 +42,13 @@ await monica.close(2_000);
 
 ## 送信が拒否されたとき
 
-envelope schema に合わない event は ingest が `422` で破棄し、どの欄が悪いかを
-body で返す。SDKはこれを読み、既定で `console.warn` へ1行出す。
+`422`（envelope schema 不正）のとき、既定で`console.warn`へ1行出す。
 
 ```
 monica: ingest rejected the envelope with 422 (invalid_envelope): 1 issue(s); $.items[0].request.method: Invalid type: Expected string
 ```
 
-`beforeSend` でallowlistを組むと必須欄（`request`を残すなら`method`も必須）を落として
-しまうことがあり、この警告が無いと送信できていないことに気づけない。自前のloggerへ
-流す場合は`onDiagnostic`を渡す。`null`を渡すと何も出さない。
+自前のloggerへ流す場合は`onDiagnostic`を渡す。`null`を渡すと何も出さない。
 
 ```ts
 export const monica = createNodeClient({

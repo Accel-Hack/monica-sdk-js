@@ -51,14 +51,12 @@ await monica.captureException(error, { tags: { trigger: "scheduled" } });
 
 ## 送信が拒否されたとき
 
-envelope schema に合わない event は ingest が`422`で破棄し、どの欄が悪いかを body で
-返す。adapterはこれを読み、既定で`console.warn`へ1行出す（Workers のログに出る）。
+`422`（envelope schema 不正）のとき、既定で`console.warn`へ1行出す（Workersのログに出る）。
 
 ```
 monica: ingest rejected the envelope with 422 (invalid_envelope): 1 issue(s); $.items[0].request.method: Invalid type: Expected string
 ```
 
-`beforeSend`で欄を落とす運用では、この警告が無いと送信できていないことに気づけない。
 出力先を変える場合は`onDiagnostic`を渡す。`null`を渡すと何も出さない。
 `flush()`の戻り値の`status` / `issues` / `error`からも取得できる。
 

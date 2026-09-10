@@ -89,8 +89,8 @@ Server ActionやRoute Handlerでは`monica.captureException(error)`も直接利�
 
 ## 送信が拒否されたとき
 
-envelope schema に合わない event は ingest が`422`で破棄し、どの欄が悪いかを body で
-返す。client / server とも既定で`console.warn`へ1行出す。
+`422`（envelope schema 不正）のとき、client / server とも既定で`console.warn`へ
+1行出す。
 
 ```
 monica: ingest rejected the envelope with 422 (invalid_envelope): 1 issue(s); $.items[0].request.method: Invalid type: Expected string
