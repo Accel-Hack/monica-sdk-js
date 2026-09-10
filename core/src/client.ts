@@ -6,6 +6,7 @@ import type {
   FlushResult,
   MonicaCoreClient,
   MonicaItem,
+  TransportResult,
 } from "./types.js";
 
 const DEFAULT_MAX_QUEUE_SIZE = 100;
@@ -33,6 +34,10 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
   const pendingCaptures = new Set<Promise<unknown>>();
   let discarded = 0;
   let closed = false;
+  // 直前に受理されなかった送信の status / issues / error。flush が返して忘れる。
+  // 422 の issues は「送っているのに届かない」原因そのものなので、警告を読めない
+  // 経路（テスト・バッチ・自前の監視）からも取れるようにしておく。
+  let lastRejection: RejectionDetails | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let sending: Promise<boolean> | undefined;
 
@@ -117,7 +122,10 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
         signal,
       ))()
       .then((result) => {
-        if (!result.accepted) discarded += items.length + reportedDiscarded;
+        if (!result.accepted) {
+          discarded += items.length + reportedDiscarded;
+          lastRejection = rejectionDetails(result);
+        }
         return result.accepted && oversizedDrops === 0;
       })
       .catch(() => {
@@ -176,25 +184,35 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
     return operation;
   }
 
+  /**
+   * 直前の拒否の内容を載せて返し、載せた分は忘れる。欄は値があるときだけ作るので、
+   * 拒否が無ければ従来どおり `{ accepted, discarded, remaining }` の 3 欄だけになる。
+   */
+  function flushResult(accepted: boolean): FlushResult {
+    const details = lastRejection;
+    lastRejection = undefined;
+    return { accepted, discarded, remaining: queue.length, ...details };
+  }
+
   async function flush(timeoutMs = DEFAULT_FLUSH_TIMEOUT_MS): Promise<FlushResult> {
     const deadline = Date.now() + Math.max(0, timeoutMs);
     let accepted = true;
     while (pendingCaptures.size > 0) {
       const remaining = deadline - Date.now();
-      if (remaining <= 0) return { accepted: false, discarded, remaining: queue.length };
+      if (remaining <= 0) return flushResult(false);
       const completed = await withTimeout(Promise.allSettled([...pendingCaptures]), remaining);
-      if (!completed) return { accepted: false, discarded, remaining: queue.length };
+      if (!completed) return flushResult(false);
     }
     while (queue.length > 0 || sending) {
       const remaining = deadline - Date.now();
-      if (remaining <= 0) return { accepted: false, discarded, remaining: queue.length };
+      if (remaining <= 0) return flushResult(false);
       const operation = sending ?? sendBatch();
       const result = await withTimeout(operation, remaining);
-      if (result === undefined) return { accepted: false, discarded, remaining: queue.length };
+      if (result === undefined) return flushResult(false);
       accepted = accepted && result;
     }
     clearTimer();
-    return { accepted, discarded, remaining: queue.length };
+    return flushResult(accepted);
   }
 
   async function close(timeoutMs?: number): Promise<FlushResult> {
@@ -204,6 +222,20 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
   }
 
   return { capture, flush, close };
+}
+
+type RejectionDetails = Pick<FlushResult, "status" | "issues" | "error">;
+
+/**
+ * transport が返した拒否の内容のうち、利用者に渡せるものだけを写す。
+ * network 障害のように status も body も無い場合は空になる。
+ */
+function rejectionDetails(result: TransportResult): RejectionDetails {
+  return {
+    ...(result.status !== undefined ? { status: result.status } : {}),
+    ...(result.issues && result.issues.length > 0 ? { issues: result.issues } : {}),
+    ...(result.error ? { error: result.error } : {}),
+  };
 }
 
 /**

@@ -14,7 +14,11 @@ import {
   readLimits,
   type JsonObject,
 } from "../../tooling/contract.js";
-import { createNodeClient, type MonicaNodeClient } from "../src/index.js";
+import {
+  createNodeClient,
+  type MonicaNodeClient,
+  type NodeClientOptions,
+} from "../src/index.js";
 
 const schema = await readEnvelopeSchema();
 const limits = await readLimits();
@@ -289,3 +293,76 @@ function lastIndexWhere<T>(items: T[], predicate: (item: T) => boolean): number 
   for (let i = items.length - 1; i >= 0; i -= 1) if (predicate(items[i]!)) return i;
   return -1;
 }
+
+/**
+ * adapter は `createFetchTransport` を内側で組むので、利用者が transport を
+ * 触らなくても 422 の診断が既定で出ることを固定する（ingest.md の 422）。
+ */
+describe("public contract: 422 の診断は adapter からも既定で出る", () => {
+  const body = JSON.stringify({
+    error: {
+      code: "invalid_envelope",
+      message: "The envelope does not match the MONICA schema",
+      issues: [{ path: "$.items[0].request.method", message: "Invalid type: Expected string" }],
+    },
+  });
+
+  function clientReturning422(onDiagnostic?: NodeClientOptions["onDiagnostic"]) {
+    return createNodeClient({
+      dsn: "https://msk_example@ingest.example.test/1",
+      environment: "production",
+      maxRetries: 0,
+      ...(onDiagnostic !== undefined ? { onDiagnostic } : {}),
+      fetch: async () => new Response(body, { status: 422 }),
+    });
+  }
+
+  test("既定で console.warn に issues の path が出て、flush からも取れる", async () => {
+    const warned: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => warned.push(args.map(String).join(" "));
+    try {
+      const client = clientReturning422();
+      await client.captureMessage("boom");
+      const result = await client.close();
+
+      expect(warned).toHaveLength(1);
+      expect(warned[0]).toContain("422 (invalid_envelope)");
+      expect(warned[0]).toContain("$.items[0].request.method");
+      expect(warned[0]).not.toContain("msk_");
+      expect(result.status).toBe(422);
+      expect(result.issues).toEqual([
+        { path: "$.items[0].request.method", message: "Invalid type: Expected string" },
+      ]);
+      expect(result.error?.code).toBe("invalid_envelope");
+      // 422 は破棄。捨てた分として勘定する
+      expect(result.discarded).toBe(1);
+      expect(result.remaining).toBe(0);
+    } finally {
+      console.warn = original;
+    }
+  });
+
+  test("onDiagnostic を渡すと差し替わり、null で無効化できる", async () => {
+    const seen: string[] = [];
+    const replaced = clientReturning422((diagnostic) => seen.push(diagnostic.message));
+    await replaced.captureMessage("boom");
+    await replaced.close();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain("$.items[0].request.method");
+
+    const warned: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => warned.push(args.map(String).join(" "));
+    try {
+      const disabled = clientReturning422(null);
+      await disabled.captureMessage("boom");
+      const result = await disabled.close();
+      expect(warned).toEqual([]);
+      // 無効化しても結果には載る
+      expect(result.issues).toHaveLength(1);
+    } finally {
+      console.warn = original;
+    }
+  });
+});

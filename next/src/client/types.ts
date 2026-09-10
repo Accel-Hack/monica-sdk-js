@@ -6,6 +6,7 @@ import type {
   MonicaLevel,
   MonicaRequest,
   MonicaUser,
+  TransportDiagnosticHandler,
 } from "@ah-monica/core";
 
 export interface NextClientOptions {
@@ -20,6 +21,11 @@ export interface NextClientOptions {
   flushIntervalMs?: number;
   requestTimeoutMs?: number;
   maxRetries?: number;
+  /**
+   * ingest が envelope を拒否したときの診断の受け取り先。既定は `console.warn` に
+   * 1 行出す（422 の `issues` の path を含む）。`null` を渡すと何も出さない。
+   */
+  onDiagnostic?: TransportDiagnosticHandler | null;
   /**
    * The application owns PII removal. MONICA does not infer which values are PII.
    * Return null to discard an event or return a sanitized event to send it.

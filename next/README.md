@@ -87,6 +87,18 @@ export const onRequestError = monica.onRequestError;
 含む可能性があるため自動収集しない。route templateやrouter種別だけを`contexts.next`へ追加する。
 Server ActionやRoute Handlerでは`monica.captureException(error)`も直接利用できる。
 
+## 送信が拒否されたとき
+
+envelope schema に合わない event は ingest が`422`で破棄し、どの欄が悪いかを body で
+返す。client / server とも既定で`console.warn`へ1行出す。
+
+```
+monica: ingest rejected the envelope with 422 (invalid_envelope): 1 issue(s); $.items[0].request.method: Invalid type: Expected string
+```
+
+browserのconsoleに出したくない場合は`onDiagnostic`を渡して差し替える（`null`で無効化）。
+`flush()`の戻り値の`status` / `issues` / `error`からも取得できる。
+
 ## PII
 
 SDKはPIIを推測して除去しない。アプリケーションが`beforeSend`で削除・マスク・破棄する。

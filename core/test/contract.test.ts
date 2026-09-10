@@ -13,6 +13,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   compileEnvelopeValidator,
+  compileErrorValidator,
   decodeGzipBody,
   definition,
   describeErrors,
@@ -30,11 +31,13 @@ import {
   type MonicaEnvelope,
   type MonicaLevel,
   type MonicaTransport,
+  type TransportDiagnostic,
 } from "../src/index.js";
 
 const schema = await readEnvelopeSchema();
 const limits = await readLimits();
 const validate = await compileEnvelopeValidator();
+const validateError = await compileErrorValidator();
 const packageMetadata = (await Bun.file(new URL("../package.json", import.meta.url)).json()) as {
   name: string;
   version: string;
@@ -381,6 +384,363 @@ describe("public contract: ingest HTTP", () => {
     });
     expect(await transport.send(envelope)).toEqual({ accepted: false, status: 429 });
     expect(attempts).toBe(2);
+  });
+});
+
+/**
+ * ingest.md: `422` は「破棄する。`issues` の path を見て payload を直す」。
+ * error.json はこの body のためだけにある schema なので、読まなければ SDK は
+ * 契約の半分しか果たしていない。読んで警告し、結果に載せるところまでを固定する。
+ */
+describe("public contract: 4xx の error body（error.json）", () => {
+  const envelope: MonicaEnvelope = {
+    sdk: { name: "@ah-monica/core", version: "0.0.0-test" },
+    sent_at: "2026-08-29T00:00:00.000Z",
+    discarded: 0,
+    items: [],
+  };
+  const dsn = "https://msk_secret_example@ingest.example.test/42";
+  const invalidEnvelopeBody = {
+    error: {
+      code: "invalid_envelope",
+      message: "The envelope does not match the MONICA schema",
+      issues: [
+        { path: "$.items[0].request.method", message: "Invalid type: Expected string" },
+        { path: "$.items[1].level", message: "Invalid option: Expected one of ..." },
+      ],
+    },
+  };
+
+  /** status と body を固定で返す transport。`onDiagnostic` は既定のまま */
+  function transportReturning(
+    status: number,
+    body: BodyInit | null,
+    onDiagnostic?: ((diagnostic: TransportDiagnostic) => void) | null,
+  ) {
+    let attempts = 0;
+    const transport = createFetchTransport({
+      dsn,
+      maxRetries: 3,
+      ...(onDiagnostic !== undefined ? { onDiagnostic } : {}),
+      fetch: async () => {
+        attempts += 1;
+        return new Response(body, { status });
+      },
+    });
+    return { transport, attempts: () => attempts };
+  }
+
+  function capturingWarn(): { warned: string[]; restore: () => void } {
+    const warned: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warned.push(args.map(String).join(" "));
+    };
+    return { warned, restore: () => (console.warn = original) };
+  }
+
+  test("fixture が公開 schema（error.json）に適合している", () => {
+    // 適合しない body で「読めた」を主張しないための土台
+    expect(validateError(invalidEnvelopeBody), describeErrors(validateError)).toBe(true);
+    expect(validateError({ error: { code: "invalid_envelope", message: "x" } })).toBe(true);
+    // code / message は必須
+    expect(validateError({ error: { message: "x" } })).toBe(false);
+  });
+
+  test("422 の issues の path が既定で console.warn に出る", async () => {
+    const warn = capturingWarn();
+    try {
+      const { transport, attempts } = transportReturning(
+        422,
+        JSON.stringify(invalidEnvelopeBody),
+      );
+      const result = await transport.send(envelope);
+
+      // 破棄は従来どおり。再送しない
+      expect(result.accepted).toBe(false);
+      expect(result.status).toBe(422);
+      expect(attempts()).toBe(1);
+      // 1 envelope につき 1 行
+      expect(warn.warned).toHaveLength(1);
+      const line = warn.warned[0]!;
+      expect(line).toContain("monica: ingest rejected the envelope with 422 (invalid_envelope)");
+      expect(line).toContain("2 issue(s)");
+      expect(line).toContain("$.items[0].request.method");
+      expect(line).toContain("$.items[1].level");
+      // 秘密情報は出さない
+      expect(line).not.toContain("msk_");
+    } finally {
+      warn.restore();
+    }
+  });
+
+  test("送信結果から status / issues / error.code が取れる", async () => {
+    const { transport } = transportReturning(422, JSON.stringify(invalidEnvelopeBody), null);
+    expect(await transport.send(envelope)).toEqual({
+      accepted: false,
+      status: 422,
+      issues: invalidEnvelopeBody.error.issues,
+      error: {
+        code: invalidEnvelopeBody.error.code,
+        message: invalidEnvelopeBody.error.message,
+      },
+    });
+  });
+
+  test("issues が無い 422 でも 1 行だけ警告する", async () => {
+    const warn = capturingWarn();
+    try {
+      const { transport } = transportReturning(
+        422,
+        JSON.stringify({ error: { code: "invalid_envelope", message: "nope" } }),
+      );
+      const result = await transport.send(envelope);
+      expect(result).toEqual({
+        accepted: false,
+        status: 422,
+        error: { code: "invalid_envelope", message: "nope" },
+      });
+      expect(warn.warned).toEqual([
+        "monica: ingest rejected the envelope with 422 (invalid_envelope): 0 issue(s)",
+      ]);
+    } finally {
+      warn.restore();
+    }
+  });
+
+  test("body が読めなくても例外を投げず、従来どおり破棄で終わる", async () => {
+    const oversized = JSON.stringify({
+      error: {
+        code: "invalid_envelope",
+        message: "too big",
+        // 上限（64 KiB）を確実に超える。読み切らずに諦める
+        issues: Array.from({ length: 4_000 }, (_, index) => ({
+          path: `$.items[${index}].request.method`,
+          message: "Invalid type: Expected string",
+        })),
+      },
+    });
+    expect(oversized.length).toBeGreaterThan(64 * 1024);
+
+    const bodies: Array<[string, BodyInit | null]> = [
+      ["空 body", null],
+      ["空文字", ""],
+      ["非 JSON", "<html>502</html>"],
+      ["JSON だが object でない", "[1,2,3]"],
+      ["error が無い", JSON.stringify({ message: "nope" })],
+      ["error が object でない", JSON.stringify({ error: "nope" })],
+      ["code が string でない", JSON.stringify({ error: { code: 7, message: "nope" } })],
+      ["上限超過", oversized],
+    ];
+
+    const warn = capturingWarn();
+    try {
+      for (const [label, body] of bodies) {
+        const { transport, attempts } = transportReturning(422, body);
+        // throw しないこと自体が assertion
+        expect(await transport.send(envelope), label).toEqual({ accepted: false, status: 422 });
+        expect(attempts(), label).toBe(1);
+      }
+      // 読めなくても「422 で破棄した」ことは伝える
+      expect(warn.warned).toHaveLength(bodies.length);
+      for (const line of warn.warned) {
+        expect(line).toBe(
+          "monica: ingest rejected the envelope with 422 (unknown): 0 issue(s)",
+        );
+      }
+    } finally {
+      warn.restore();
+    }
+  });
+
+  test("issues の要素は path / message が string のものだけ残す", async () => {
+    const { transport } = transportReturning(
+      422,
+      JSON.stringify({
+        error: {
+          code: "invalid_envelope",
+          message: "mixed",
+          issues: [
+            { path: "$.items[0].level", message: "Invalid option" },
+            { path: 1, message: "Invalid" },
+            { path: "$.items[1].level" },
+            "nope",
+            null,
+          ],
+        },
+      }),
+      null,
+    );
+    const result = await transport.send(envelope);
+    expect(result.issues).toEqual([{ path: "$.items[0].level", message: "Invalid option" }]);
+  });
+
+  test("onDiagnostic で警告を差し替えられ、null で無効化できる", async () => {
+    const seen: TransportDiagnostic[] = [];
+    const replaced = transportReturning(422, JSON.stringify(invalidEnvelopeBody), (diagnostic) => {
+      seen.push(diagnostic);
+    });
+    await replaced.transport.send(envelope);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.status).toBe(422);
+    expect(seen[0]!.issues.map((issue) => issue.path)).toEqual([
+      "$.items[0].request.method",
+      "$.items[1].level",
+    ]);
+    expect(seen[0]!.error?.code).toBe("invalid_envelope");
+    expect(seen[0]!.message).toContain("$.items[0].request.method");
+
+    const warn = capturingWarn();
+    try {
+      const disabled = transportReturning(422, JSON.stringify(invalidEnvelopeBody), null);
+      const result = await disabled.transport.send(envelope);
+      expect(warn.warned).toEqual([]);
+      // 無効化しても結果には載る
+      expect(result.issues).toHaveLength(2);
+    } finally {
+      warn.restore();
+    }
+  });
+
+  test("onDiagnostic が throw しても送信結果は変わらない", async () => {
+    const { transport } = transportReturning(422, JSON.stringify(invalidEnvelopeBody), () => {
+      throw new Error("handler exploded");
+    });
+    const result = await transport.send(envelope);
+    expect(result.accepted).toBe(false);
+    expect(result.status).toBe(422);
+  });
+
+  test("422 以外の 4xx は警告を出さず、破棄も再送しないまま変わらない", async () => {
+    const warn = capturingWarn();
+    try {
+      for (const status of [400, 401, 404]) {
+        const { transport, attempts } = transportReturning(
+          status,
+          JSON.stringify({ error: { code: "bad_request", message: "nope" } }),
+        );
+        const result = await transport.send(envelope);
+        expect(result.accepted, `status ${status}`).toBe(false);
+        expect(result.status, `status ${status}`).toBe(status);
+        expect(attempts(), `status ${status}`).toBe(1);
+        // 読んだ内容は結果には載せる（分岐は status で行う）
+        expect(result.error, `status ${status}`).toEqual({ code: "bad_request", message: "nope" });
+      }
+      expect(warn.warned).toEqual([]);
+    } finally {
+      warn.restore();
+    }
+  });
+
+  test("429 / 5xx の retry 挙動は変わらず、警告も出さない", async () => {
+    const warn = capturingWarn();
+    try {
+      const statuses: number[] = [];
+      const transport = createFetchTransport({
+        dsn,
+        maxRetries: 2,
+        fetch: async () => {
+          statuses.push(statuses.length);
+          if (statuses.length === 1) {
+            return new Response(JSON.stringify({ error: { code: "rate_limited", message: "x" } }), {
+              status: 429,
+              headers: { "Retry-After": "0" },
+            });
+          }
+          if (statuses.length === 2) return new Response("boom", { status: 503 });
+          return new Response(null, { status: 202 });
+        },
+      });
+      expect(await transport.send(envelope)).toEqual({ accepted: true, status: 202 });
+      expect(statuses).toHaveLength(3);
+      expect(warn.warned).toEqual([]);
+    } finally {
+      warn.restore();
+    }
+  }, 10_000);
+
+  test("retry の途中で 422 になっても警告は 1 回だけ", async () => {
+    const warn = capturingWarn();
+    try {
+      let attempts = 0;
+      const transport = createFetchTransport({
+        dsn,
+        maxRetries: 3,
+        fetch: async () => {
+          attempts += 1;
+          if (attempts === 1) return new Response("boom", { status: 503 });
+          return new Response(JSON.stringify(invalidEnvelopeBody), { status: 422 });
+        },
+      });
+      expect((await transport.send(envelope)).status).toBe(422);
+      expect(attempts).toBe(2);
+      expect(warn.warned).toHaveLength(1);
+    } finally {
+      warn.restore();
+    }
+  }, 10_000);
+
+  test("ReadableStream を持たない Response からも body を読む", async () => {
+    // 一部 runtime / 自前 fetch は body stream を持たない Response を返す
+    const fake = {
+      ok: false,
+      status: 422,
+      body: null,
+      headers: new Headers(),
+      text: async () => JSON.stringify(invalidEnvelopeBody),
+    } as unknown as Response;
+    const transport = createFetchTransport({
+      dsn,
+      maxRetries: 0,
+      onDiagnostic: null,
+      fetch: async () => fake,
+    });
+    const result = await transport.send(envelope);
+    expect(result.issues?.map((issue) => issue.path)).toEqual([
+      "$.items[0].request.method",
+      "$.items[1].level",
+    ]);
+  });
+
+  test("flush() の戻り値から status と issues が取れる", async () => {
+    const client = createCoreClient({
+      environment: "production",
+      transport: {
+        async send() {
+          return {
+            accepted: false,
+            status: 422,
+            issues: invalidEnvelopeBody.error.issues,
+            error: {
+              code: invalidEnvelopeBody.error.code,
+              message: invalidEnvelopeBody.error.message,
+            },
+          };
+        },
+      },
+    });
+    await client.capture({ type: "error", platform: "node", level: "error", message: "boom" });
+    const result = await client.flush();
+
+    expect(result.accepted).toBe(false);
+    expect(result.discarded).toBe(1);
+    expect(result.remaining).toBe(0);
+    expect(result.status).toBe(422);
+    expect(result.issues?.map((issue) => issue.path)).toEqual([
+      "$.items[0].request.method",
+      "$.items[1].level",
+    ]);
+    expect(result.error?.code).toBe("invalid_envelope");
+  });
+
+  test("受理された送信のあとの flush() には status / issues を載せない", async () => {
+    const client = createCoreClient({
+      environment: "production",
+      transport: recordingTransport([]),
+    });
+    await client.capture({ type: "error", platform: "node", level: "error", message: "boom" });
+    // 後方互換: 拒否が無ければ従来どおりの 3 欄だけ
+    expect(await client.flush()).toEqual({ accepted: true, discarded: 0, remaining: 0 });
   });
 });
 
