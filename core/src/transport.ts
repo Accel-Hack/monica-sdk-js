@@ -74,27 +74,36 @@ export function createFetchTransport(options: FetchTransportOptions): MonicaTran
             body,
             signal: controller.signal,
           });
-          if (response.ok) return { accepted: true, status: response.status };
+          if (response.ok) {
+            discardBody(response);
+            return { accepted: true, status: response.status };
+          }
           if (response.status !== 429 && response.status < 500) {
             // ingest.md: 429 以外の 4xx は恒久的な失敗。破棄することは変えず、
             // 破棄する前に body を error.json として読む。422 の issues は payload を
             // 直すための情報で、読まなければ「送っているのに 1 件も届かない」状態が
             // 無言のまま続く。
             //
-            // body を読むあいだ request timeout で abort されると診断が失われるので、
-            // レスポンスヘッダが返った時点で timer を止める（finally の clearTimeout は
-            // 二重呼び出しでも安全）。
+            // body の読み取りには request timeout を張り直す。header だけ返して body を
+            // 閉じないピアに当たったとき、ここで待ち続けると send() が resolve せず、
+            // client の sending が立ったまま以後の送信が止まってしまう。
+            // （最初の timer は response 待ちのもので、ここで役目を終える）
             clearTimeout(timeout);
-            const details = await readErrorDetails(response);
+            const details = await readErrorDetails(response, requestTimeoutMs);
             if (response.status === 422) {
               notify(onDiagnostic, { status: response.status, ...details });
             }
             return { accepted: false, status: response.status, ...details };
           }
-          if (attempt === maxRetries) return { accepted: false, status: response.status };
+          if (attempt === maxRetries) {
+            discardBody(response);
+            return { accepted: false, status: response.status };
+          }
           const retryAfter = response.status === 429
             ? parseRetryAfter(response.headers.get("Retry-After"))
             : undefined;
+          // 読まない body を放置すると connection が pool に返らない
+          discardBody(response);
           await delay(retryAfter ?? backoff(attempt), outerSignal);
         } catch {
           if (outerSignal?.aborted || attempt === maxRetries) return { accepted: false };
@@ -114,13 +123,16 @@ interface ErrorDetails {
   error?: TransportError;
 }
 
+/** 読み取りを諦めたことを表す番兵。`undefined` は「読めなかった」と同じ扱い */
+const GIVE_UP = Symbol("give up");
+
 /**
  * 4xx のレスポンス body を error.json の形として読む。読めなければ欄を作らずに返す。
  * ここから例外を投げてはいけない: 送信結果（破棄）は body の読めなさに左右されない。
  */
-async function readErrorDetails(response: Response): Promise<ErrorDetails> {
+async function readErrorDetails(response: Response, timeoutMs: number): Promise<ErrorDetails> {
   try {
-    const text = await readCappedText(response, MAX_ERROR_BODY_BYTES);
+    const text = await readCappedText(response, MAX_ERROR_BODY_BYTES, timeoutMs);
     if (text === undefined || text === "") return {};
     return parseErrorBody(text);
   } catch {
@@ -129,33 +141,49 @@ async function readErrorDetails(response: Response): Promise<ErrorDetails> {
 }
 
 /**
- * body を上限まで読む。上限を超えたら読むのをやめ `undefined` を返す。
+ * body を上限まで読む。上限超過・timeout・読み取り失敗ではいずれも `undefined` を
+ * 返し、読み終えていない body は cancel する（connection を pool に返すため）。
+ *
  * `Content-Length` を信用せず実際に読んだ byte 数で判定する（chunked や
  * 嘘の header でも上限を守るため）。
  */
-async function readCappedText(response: Response, limit: number): Promise<string | undefined> {
+async function readCappedText(
+  response: Response,
+  limit: number,
+  timeoutMs: number,
+): Promise<string | undefined> {
+  const deadline = Date.now() + timeoutMs;
   const stream = response.body;
   if (!stream) {
-    const text = await response.text();
     // ReadableStream を持たない Response（テストの fake や一部 runtime）向けの経路。
-    // 文字数は UTF-8 の byte 数以下なので、これで上限は守れる。
-    return text.length > limit ? undefined : text;
+    // ここでは上限まで読む手段が無いので、読み終えてから byte 数で捨てる
+    const text = await withDeadline(response.text(), deadline);
+    if (text === GIVE_UP) return undefined;
+    return new TextEncoder().encode(text).byteLength > limit ? undefined : text;
   }
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
     for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-      total += value.byteLength;
+      const chunk = await withDeadline(reader.read(), deadline);
+      if (chunk === GIVE_UP) {
+        // header だけ返して body を閉じないピア、または遅すぎる body
+        await reader.cancel().catch(() => {});
+        return undefined;
+      }
+      if (chunk.done) break;
+      if (!chunk.value) continue;
+      total += chunk.value.byteLength;
       if (total > limit) {
         await reader.cancel().catch(() => {});
         return undefined;
       }
-      chunks.push(value);
+      chunks.push(chunk.value);
     }
+  } catch {
+    await reader.cancel().catch(() => {});
+    return undefined;
   } finally {
     reader.releaseLock();
   }
@@ -166,6 +194,35 @@ async function readCappedText(response: Response, limit: number): Promise<string
     offset += chunk.byteLength;
   }
   return new TextDecoder().decode(body);
+}
+
+/**
+ * `deadline` までに解決しなければ `GIVE_UP` を返す。捨てる側の promise の rejection は
+ * 飲む（unhandled rejection にしない）。
+ */
+function withDeadline<T>(promise: Promise<T>, deadline: number): Promise<T | typeof GIVE_UP> {
+  promise.catch(() => {});
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<typeof GIVE_UP>((resolve) => {
+      timer = setTimeout(() => resolve(GIVE_UP), Math.max(0, deadline - Date.now()));
+      const candidate = timer as unknown as { unref?: () => void };
+      candidate.unref?.();
+    }),
+  ]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+}
+
+/**
+ * 読まない body を捨てる。undici は body を読み切るか cancel するまで connection を
+ * pool に返さない。cancel の完了は待たない（送信結果はこれに左右されない）。
+ */
+function discardBody(response: Response): void {
+  const body = response.body;
+  if (!body || body.locked) return;
+  void body.cancel().catch(() => {});
 }
 
 function parseErrorBody(text: string): ErrorDetails {

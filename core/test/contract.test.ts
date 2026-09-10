@@ -474,6 +474,85 @@ describe("public contract: 4xx の error body（error.json）", () => {
     }
   });
 
+  test("issues 有りの警告文面（全 SDK で揃えた 1 行）", async () => {
+    const warn = capturingWarn();
+    try {
+      const { transport } = transportReturning(
+        422,
+        JSON.stringify({
+          error: {
+            code: "invalid_envelope",
+            message: "The envelope does not match the MONICA schema",
+            issues: [
+              { path: "$.items[0].request.method", message: "Invalid type: Expected string" },
+            ],
+          },
+        }),
+      );
+      await transport.send(envelope);
+      expect(warn.warned).toEqual([
+        "monica: ingest rejected the envelope with 422 (invalid_envelope): 1 issue(s); $.items[0].request.method: Invalid type: Expected string",
+      ]);
+    } finally {
+      warn.restore();
+    }
+  });
+
+  test("header だけ返して body を閉じないピアでも send() が返る", async () => {
+    // 4xx の body を無期限に待つと、client の sending が立ったまま以後の送信が止まる。
+    // body の読み取りにも requestTimeoutMs を掛けて、診断を諦めて破棄で終わらせる
+    let cancelled = false;
+    const transport = createFetchTransport({
+      dsn,
+      maxRetries: 0,
+      requestTimeoutMs: 50,
+      onDiagnostic: null,
+      fetch: async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              // 途中で切れた JSON を 1 chunk だけ流し、close しない
+              controller.enqueue(new TextEncoder().encode('{"error":'));
+            },
+            cancel() {
+              cancelled = true;
+            },
+          }),
+          { status: 422 },
+        ),
+    });
+
+    const started = Date.now();
+    expect(await transport.send(envelope)).toEqual({ accepted: false, status: 422 });
+    // 読み取りの deadline を待つだけで返る（無期限に待たない）
+    expect(Date.now() - started).toBeLessThan(2_000);
+    // 読み終えられなかった body は cancel して connection を返す
+    expect(cancelled).toBe(true);
+  }, 10_000);
+
+  test("上限判定は文字数ではなく UTF-8 の byte 数で行う", async () => {
+    // stream を持たない Response 経路。3 byte の文字で、文字数だけ見ると上限内に見える
+    const issues = [{ path: "$.items[0].message", message: "あ".repeat(30_000) }];
+    const text = JSON.stringify({ error: { code: "invalid_envelope", message: "x", issues } });
+    expect(text.length).toBeLessThan(64 * 1024);
+    expect(new TextEncoder().encode(text).byteLength).toBeGreaterThan(64 * 1024);
+
+    const transport = createFetchTransport({
+      dsn,
+      maxRetries: 0,
+      onDiagnostic: null,
+      fetch: async () =>
+        ({
+          ok: false,
+          status: 422,
+          body: null,
+          headers: new Headers(),
+          text: async () => text,
+        }) as unknown as Response,
+    });
+    expect(await transport.send(envelope)).toEqual({ accepted: false, status: 422 });
+  });
+
   test("送信結果から status / issues / error.code が取れる", async () => {
     const { transport } = transportReturning(422, JSON.stringify(invalidEnvelopeBody), null);
     expect(await transport.send(envelope)).toEqual({
