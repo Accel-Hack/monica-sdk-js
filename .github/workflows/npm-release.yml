@@ -98,3 +98,31 @@ jobs:
       - name: "@ah-monica/next を公開"
         working-directory: next
         run: npm publish --access public
+
+  github-release:
+    name: "GitHub release を作成"
+    needs: publish
+    if: github.repository == 'Accel-Hack/monica-sdk-js'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # release の作成にだけ書き込みが要る。publish job は contents: read のまま。
+    permissions:
+      contents: write
+    steps:
+      # 4 package の公開が済んだ tag に、変更を知らせる release を作る。
+      # release は publish の引き金ではなく結果なので、ここで一度だけ作る。
+      - name: release を作成
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "$GITHUB_REF_NAME の release は既にある。何もしない。"
+            exit 0
+          fi
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
