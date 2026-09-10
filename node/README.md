@@ -64,8 +64,7 @@ export const monica = createNodeClient({
 
 ### 鍵が失効したとき（401）
 
-鍵を失効・ローテートしたあとも動き続けているプロセスが、受理されない endpoint へ
-`flushIntervalMs`ごとに永久にPOSTし続けないよう、`401`を受けたSDKは送信を止める。
+`401`（キー不正・失効）を受けると、SDKは以後1回もPOSTしない。
 
 ```
 monica: ingest rejected the envelope with 401 (invalid_key); no further envelopes will be sent
