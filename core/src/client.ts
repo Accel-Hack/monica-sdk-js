@@ -38,6 +38,8 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
   // 422 の issues は「送っているのに届かない」原因そのものなので、警告を読めない
   // 経路（テスト・バッチ・自前の監視）からも取れるようにしておく。
   let lastRejection: RejectionDetails | undefined;
+  // transport.json: 401 は drop_and_stop。一度立つと戻らない
+  let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let sending: Promise<boolean> | undefined;
 
@@ -57,8 +59,75 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
     timer = undefined;
   }
 
+  /**
+   * 401（`drop_and_stop`）を受けたあとの後始末。鍵が失効・ローテートされた長寿命
+   * プロセスが、絶対に受理されない endpoint へ flushIntervalMs ごとに永久に POST し
+   * 続けるのを止める。queue に残った分を持ち続けても二度と送れず、残すと flush が
+   * deadline まで空回りするので、捨てた分として勘定して報告する。
+   */
+  function stopSending(): void {
+    if (stopped) return;
+    stopped = true;
+    closed = true;
+    clearTimer();
+    dropQueue();
+  }
+
+  /** 送る先が無くなった queue を捨てて、捨てた分として勘定する */
+  function dropQueue(): void {
+    discarded += queue.length;
+    queue.length = 0;
+  }
+
+  /**
+   * items を 1 envelope として送る。`413` なら item 単位で半分に割って送り直し
+   * （transport.json の `split_and_retry`）、1 件でも `413` なら捨てる。
+   *
+   * ここは reject しない。`void sendBatch()` の 2 か所が promise を捨てるので、
+   * rejection は unhandled rejection になり Node は既定でプロセスを落とす。
+   */
+  async function deliver(
+    items: MonicaItem[],
+    reportedDiscarded: number,
+    sentAt: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    let result: TransportResult;
+    try {
+      // 同期的に throw する transport も rejection 経路に寄せる
+      result = await (async () =>
+        options.transport.send(
+          { sdk, sent_at: sentAt, discarded: reportedDiscarded, items },
+          signal,
+        ))();
+    } catch {
+      discarded += items.length + reportedDiscarded;
+      return false;
+    }
+    // 自前 transport が stop を返さなくても、契約（drop_and_stop）どおり止める
+    if (result.stop || result.status === 401) stopSending();
+    if (result.accepted) return true;
+    if (result.status === 413 && items.length > 1 && !stopped) {
+      // 分割の境界は item（ingest.md）。捨てた分の勘定は前半の envelope にだけ載せ、
+      // sent_at は分割前のものを使い回す（分割は 1 回の送信の続きなので）
+      const half = Math.floor(items.length / 2);
+      const first = await deliver(items.slice(0, half), reportedDiscarded, sentAt, signal);
+      const second = await deliver(items.slice(half), 0, sentAt, signal);
+      return first && second;
+    }
+    discarded += items.length + reportedDiscarded;
+    lastRejection = rejectionDetails(result);
+    return false;
+  }
+
   async function sendBatch(signal?: AbortSignal): Promise<boolean> {
     if (sending) return sending;
+    if (stopped) {
+      // 停止と競合した capture が item を残していることがある。送る先が無いので
+      // 捨てて勘定する。残すと flush が deadline まで空回りする
+      dropQueue();
+      return false;
+    }
     if (queue.length === 0) return true;
     clearTimer();
     let oversizedDrops = 0;
@@ -107,31 +176,9 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
     if (!items) return oversizedDrops === 0;
     const reportedDiscarded = discarded;
     discarded = 0;
-    // A caller-supplied `transport.send` that throws synchronously would reject
-    // this async function, and both `void sendBatch()` sites drop the promise:
-    // that is an unhandled rejection, which takes a Node process down by
-    // default. Wrapping the call turns it into the rejection path below.
-    const operation = (async () =>
-      options.transport.send(
-        {
-          sdk,
-          sent_at: sentAt,
-          discarded: reportedDiscarded,
-          items,
-        },
-        signal,
-      ))()
-      .then((result) => {
-        if (!result.accepted) {
-          discarded += items.length + reportedDiscarded;
-          lastRejection = rejectionDetails(result);
-        }
-        return result.accepted && oversizedDrops === 0;
-      })
-      .catch(() => {
-        discarded += items.length + reportedDiscarded;
-        return false;
-      });
+    const operation = deliver(items, reportedDiscarded, sentAt, signal).then(
+      (accepted) => accepted && oversizedDrops === 0,
+    );
     sending = operation;
     try {
       return await operation;
@@ -170,6 +217,13 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
       // is covered by that guard.
       item = withoutEmptyContractArrays(item);
 
+      // beforeSend を待っているあいだに 401 で閉じることがある。閉じたあとに
+      // queue へ積むと二度と送れない item が残り、flush が deadline まで空回りする
+      if (stopped) {
+        discarded += 1;
+        return null;
+      }
+
       if (queue.length >= maxQueueSize) {
         queue.shift();
         discarded += 1;
@@ -191,7 +245,15 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
   function flushResult(accepted: boolean): FlushResult {
     const details = lastRejection;
     lastRejection = undefined;
-    return { accepted, discarded, remaining: queue.length, ...details };
+    return {
+      // 401 で閉じたあとは送る先が無いので、待つものが無くても受理は主張しない
+      accepted: accepted && !stopped,
+      discarded,
+      remaining: queue.length,
+      ...details,
+      // status と違い、閉じたことは flush をまたいでも分かるように残す
+      ...(stopped ? { stopped: true } : {}),
+    };
   }
 
   async function flush(timeoutMs = DEFAULT_FLUSH_TIMEOUT_MS): Promise<FlushResult> {
@@ -203,7 +265,7 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
       const completed = await withTimeout(Promise.allSettled([...pendingCaptures]), remaining);
       if (!completed) return flushResult(false);
     }
-    while (queue.length > 0 || sending) {
+    while ((queue.length > 0 || sending) && !stopped) {
       const remaining = deadline - Date.now();
       if (remaining <= 0) return flushResult(false);
       const operation = sending ?? sendBatch();

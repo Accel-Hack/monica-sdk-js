@@ -51,8 +51,13 @@ export function createFetchTransport(options: FetchTransportOptions): MonicaTran
     throw new RangeError("requestTimeoutMs must be a positive integer");
   }
 
+  // transport.json: 401 は drop_and_stop。鍵が失効した長寿命プロセスが、絶対に
+  // 受理されない endpoint へ flushIntervalMs ごとに永久に POST し続けるのを止める。
+  let stopped = false;
+
   return {
     async send(envelope, outerSignal): Promise<TransportResult> {
+      if (stopped) return { accepted: false, status: 401, stop: true };
       const body = await gzipEnvelope(envelope);
       for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
         const controller = new AbortController();
@@ -90,10 +95,20 @@ export function createFetchTransport(options: FetchTransportOptions): MonicaTran
             // （最初の timer は response 待ちのもので、ここで役目を終える）
             clearTimeout(timeout);
             const details = await readErrorDetails(response, requestTimeoutMs);
-            if (response.status === 422) {
+            // 422（payload を直せる情報）と 401（以後止めたこと）は既定で警告する。
+            // どちらも 1 envelope につき 1 回で、401 は止めたあと POST しないので
+            // 二度目は出ない。
+            if (response.status === 422 || response.status === 401) {
               notify(onDiagnostic, { status: response.status, ...details });
             }
-            return { accepted: false, status: response.status, ...details };
+            // transport.json: 401 は drop_and_stop。この transport からは以後 POST しない。
+            if (response.status === 401) stopped = true;
+            return {
+              accepted: false,
+              status: response.status,
+              ...details,
+              ...(response.status === 401 ? { stop: true } : {}),
+            };
           }
           if (attempt === maxRetries) {
             discardBody(response);
@@ -283,7 +298,12 @@ function formatDiagnostic(
   error: TransportError | undefined,
   issues: TransportIssue[],
 ): string {
-  const head = `monica: ingest rejected the envelope with ${status} (${error?.code ?? "unknown"}): ${issues.length} issue(s)`;
+  const code = error?.code ?? "unknown";
+  // 401 は payload の問題ではなく鍵の問題。直すべきことが違うので文面も分ける
+  if (status === 401) {
+    return `monica: ingest rejected the envelope with 401 (${code}); no further envelopes will be sent`;
+  }
+  const head = `monica: ingest rejected the envelope with ${status} (${code}): ${issues.length} issue(s)`;
   if (issues.length === 0) return head;
   return `${head}${issues.map((issue) => `; ${issue.path}: ${issue.message}`).join("")}`;
 }

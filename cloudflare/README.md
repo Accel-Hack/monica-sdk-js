@@ -60,6 +60,13 @@ monica: ingest rejected the envelope with 422 (invalid_envelope): 1 issue(s); $.
 出力先を変える場合は`onDiagnostic`を渡す。`null`を渡すと何も出さない。
 `flush()`の戻り値の`status` / `issues` / `error`からも取得できる。
 
+`401`（鍵の失効・種別違い）を受けると、そのclientからは以後1回もPOSTしない。
+`flush()`の戻り値の`stopped: true`と次の1行で分かる。
+
+```
+monica: ingest rejected the envelope with 401 (invalid_key); no further envelopes will be sent
+```
+
 ## PII方針
 
 SDKは、例外message、stack、request、contextがPIIかどうかを推測せず、自動除去も

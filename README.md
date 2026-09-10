@@ -31,11 +31,11 @@ MONICA へ送る envelope の形、上限値、Ingest API の叩き方は、MONI
 
 ### 拒否されたときの診断
 
-`422`（envelope schema 不正）のとき、4 package は ingest が返す
-[`error.json`](spec/v1/error.json) の body を読み、既定で `console.warn` に 1 行出す。
+`422`（envelope schema 不正）と `401`（キー不正・失効）のとき、4 package は ingest が
+返す [`error.json`](spec/v1/error.json) の body を読み、既定で `console.warn` に 1 行出す。
 差し替え・無効化は `onDiagnostic`（既定 `console.warn`、`null` で無効）。読めた内容は
-`flush()` の戻り値の `status` / `issues` / `error` から取れる。文面と欄の詳細は
-[`core/README.md`](core/README.md)。
+`flush()` の戻り値の `status` / `issues` / `error` から取れる。status ごとの挙動と
+文面は [`core/README.md`](core/README.md)。
 
 ## 開発
 

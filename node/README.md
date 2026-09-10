@@ -62,6 +62,19 @@ export const monica = createNodeClient({
 
 `flush()`の戻り値の`status` / `issues` / `error`からも取得できる。
 
+### 鍵が失効したとき（401）
+
+`401`（キー不正・失効）を受けると、SDKは以後1回もPOSTしない。
+
+```
+monica: ingest rejected the envelope with 401 (invalid_key); no further envelopes will be sent
+```
+
+止まったあとの`captureException` / `captureMessage`は`null`を返し、queueに残っていた
+分（停止と同時に進行していた`beforeSend`の分も含む）は`flush()`の戻り値の
+`discarded`に勘定される。`stopped: true`で判定できる。
+送信を再開するには正しい鍵で`createNodeClient`を呼び直す。
+
 ## PII方針
 
 SDKは、文字列やオブジェクトがPIIかどうかを推測せず、自動除去もしない。
