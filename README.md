@@ -48,7 +48,7 @@ bun run test:contract    # 契約テストだけ
 | workflow | いつ | 何をするか |
 | --- | --- | --- |
 | [`ci.yml`](.github/workflows/ci.yml) | PR と main への push | `bun run check`、`bun run spec:check`、Node 20 / 22 / 24 での `node` / `next` の runtime smoke |
-| [`npm-release.yml`](.github/workflows/npm-release.yml) | `v*` tag | 4 package を npm へ公開 |
+| [`npm-release.yml`](.github/workflows/npm-release.yml) | `v*` tag | 4 package を npm へ公開し、その tag の GitHub release を作成 |
 
 ## リリース
 
@@ -58,6 +58,9 @@ bun run test:contract    # 契約テストだけ
 2. PR で main へ merge する
 3. その commit に `vX.Y.Z` tag を付けて push する。tag の版が 4 package の版と
    一致しないと workflow が落ちる
+4. 4 package の公開が済むと workflow が同じ tag の GitHub release を作る。
+   notes は前の tag からの PR を並べた自動生成なので、利用者から見た変更
+   （新しい API、既定値の変更、breaking change と移行手順）は後から書き足す
 
 publish は npm の Trusted Publishing（OIDC）で行い、長期の publish token は持たない。
 Trusted Publisher は package ごとに npmjs.com 側の設定で、この repository の
