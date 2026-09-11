@@ -1,7 +1,18 @@
 # @ah-monica/node
 
-Node.js 20+ のサーバアプリケーションから MONICA へエラーを送るSDK。
-ESM packageなので、Node.js 20+・TypeScript・任意のpackage managerを使うアプリケーションからそのまま利用できる。
+Node.js のサーバアプリケーションから MONICA へエラーを送る SDK。Node.js 20 以上の ESM package。
+
+共通の使い方・オプション・制約は [ルートの README](../README.md) にある。
+
+## インストール
+
+```bash
+npm install @ah-monica/node
+```
+
+## 初期化
+
+DSN には secret key（`msk_...`）を使い、環境変数にだけ置く。
 
 ```ts
 import { createNodeClient } from "@ah-monica/node";
@@ -11,92 +22,55 @@ export const monica = createNodeClient({
   environment: process.env.NODE_ENV ?? "development",
   release: process.env.GIT_SHA,
   beforeSend(item) {
-    // PIIの定義はアプリケーション固有。利用側で送信可能な値だけにする。
+    // どの値が個人情報かはアプリケーション固有。送ってよい値だけを残す。
     delete item.user;
     if (item.request) delete item.request.headers;
     return item;
   },
 });
+```
 
+## 使い方
+
+```ts
 try {
   await runTask();
 } catch (error) {
   await monica.captureException(error, { tags: { component: "server-runtime" } });
   throw error;
 }
+
+monica.captureMessage("queue backlog is growing", "warning");
 ```
 
-`MONICA_DSN` は `https://<secret-key>@<ingest-host>` の形式。パスを付けても構わないが、
-送信先は origin に `/v1/envelope` を付けたものになり、DSN のパス・クエリ・フラグメントは
-捨てられる。project の識別はキーで行われるので、DSN のパスに project id を書く必要はない。
-MONICAへイベントを送るにはプロジェクトのAPIキーが必要。Node.jsサーバでは
-管理画面で発行したsecret key（`msk_...`）を環境変数にだけ保存し、ソースコード、
-ログ、クライアント配信物には含めない。npmからpackageをinstallするだけなら、
-MONICAのAPIキーは不要。
-終了時は送信を無期限に待たないよう、タイムアウトを指定する。
+プロセスが終わる前に、タイムアウトを指定して送信を待つ。
 
 ```ts
 await monica.flush(2_000);
 await monica.close(2_000);
 ```
 
-## 送信が拒否されたとき
+### scope
 
-`422`（envelope schema 不正）のとき、既定で`console.warn`へ1行出す。
-
-```
-monica: ingest rejected the envelope with 422 (invalid_envelope): 1 issue(s); $.items[0].request.method: Invalid type: Expected string
-```
-
-自前のloggerへ流す場合は`onDiagnostic`を渡す。`null`を渡すと何も出さない。
+`setUser` / `addBreadcrumb` は現在の scope（`withScope` の外ではプロセス全体の scope）を
+更新する。`withScope` は `AsyncLocalStorage` でその callback の中だけに閉じた scope を
+作るので、request ごとの文脈はこちらに入れる。
 
 ```ts
-export const monica = createNodeClient({
-  dsn: process.env.MONICA_DSN!,
-  environment: process.env.NODE_ENV ?? "development",
-  onDiagnostic(diagnostic) {
-    logger.warn(diagnostic.message, { issues: diagnostic.issues });
-  },
+app.use((req, res, next) => {
+  monica.withScope((scope) => {
+    scope.setUser({ id: req.userId });
+    scope.setTag("route", req.route.path);
+    scope.addBreadcrumb({ category: "http", message: "request received" });
+    next();
+  });
 });
 ```
 
-`flush()`の戻り値の`status` / `issues` / `error`からも取得できる。
+### プロセスフック
 
-### 鍵が失効したとき（401）
-
-`401`（キー不正・失効）を受けると、SDKは以後1回もPOSTしない。
-
-```
-monica: ingest rejected the envelope with 401 (invalid_key); no further envelopes will be sent
-```
-
-止まったあとの`captureException` / `captureMessage`は`null`を返し、queueに残っていた
-分（停止と同時に進行していた`beforeSend`の分も含む）は`flush()`の戻り値の
-`discarded`に勘定される。`stopped: true`で判定できる。
-送信を再開するには正しい鍵で`createNodeClient`を呼び直す。
-
-### bodyが大きすぎると言われたとき（413）
-
-SDKは契約（gzip後1 MiB）を下回るサイズしか送らないため、specどおりのingestから
-`413`は返らない。返った場合は経路上のproxyやgatewayが契約より低いbody上限を
-持っている。SDKは`items`を半分に割って送り直し、割った先がすべて受理されても
-`flush()`の戻り値の`status`は`413`のままにする。警告はtransportにつき1回だけ。
-
-```
-monica: ingest rejected the envelope with 413 (unknown); splitting and resending. A size limit on the path may be below the 1 MiB (gzip) contract
-```
-
-## PII方針
-
-SDKは、文字列やオブジェクトがPIIかどうかを推測せず、自動除去もしない。
-送信する値の選択と除去は利用アプリケーションの責任であり、`beforeSend`を
-そのための最終境界として提供する。MONICAサーバの既知credentialフィルターは
-防御層であり、任意のPIIが除去される保証ではない。
-
-## プロセスフック
-
-importしただけではグローバルhookを登録しない。必要な場合だけ明示的に登録し、
-テストやshutdown時に解除する。
+import しただけではグローバル hook を登録しない。必要な場合だけ明示的に登録し、
+テストや shutdown で解除する。
 
 ```ts
 const uninstall = monica.installProcessHooks();
@@ -104,6 +78,35 @@ const uninstall = monica.installProcessHooks();
 uninstall();
 ```
 
-既定では、終了動作を変えない `uncaughtExceptionMonitor` だけを使う。
-`unhandledRejection: true` はNode.jsの既定終了動作を変えるため、アプリ側で
-終了方針も管理する場合にだけ有効にする。
+| option | 型 | default | 説明 |
+| --- | --- | --- | --- |
+| `uncaughtException` | `boolean` | `true` | `uncaughtExceptionMonitor` で `level: "fatal"` として送る。Node.js の終了動作は変えない |
+| `unhandledRejection` | `boolean` | `false` | `unhandledRejection` を購読する。listener を付けると Node.js の既定の終了動作が変わるので、終了方針もアプリケーション側で管理する場合にだけ有効にする |
+
+## オプション
+
+| option | 型 | default | 説明 |
+| --- | --- | --- | --- |
+| `dsn` | `string` | 必須 | `https://msk_...@<ingest-host>` |
+| `environment` | `string` | 必須 | 1〜128 文字 |
+| `release` | `string` | なし | item の `release` に載る |
+| `sampleRate` | `number` | `1` | 0〜1 |
+| `maxBreadcrumbs` | `number` | `50` | 保持する breadcrumb 数 |
+| `maxQueueSize` | `number` | `100` | queue の上限 |
+| `batchSize` | `number` | `30` | 1 envelope に載せる item 数 |
+| `flushIntervalMs` | `number` | `5000` | queue に item がある間の自動送信間隔 |
+| `requestTimeoutMs` | `number` | `2000` | 1 回の HTTP request の上限 |
+| `maxRetries` | `number` | `5` | `429` / `5xx` / network 障害の再送回数 |
+| `onDiagnostic` | `(diagnostic) => void \| null` | `console.warn` に 1 行 | 拒否されたときの診断の受け取り先。`null` で無効 |
+| `beforeSend` | `(item, hint) => item \| null \| Promise<...>` | なし | `null` を返すと破棄 |
+| `fetch` | `typeof fetch` | `globalThis.fetch` | 送信に使う fetch |
+
+## 送信結果と診断
+
+拒否されたときは既定で `console.warn` に 1 行出る（`422` / `401` / `413`）。
+`flush()` の戻り値の `status` / `issues` / `error` / `stopped` からも取れる。
+詳しくは [TROUBLESHOOTING.md](../TROUBLESHOOTING.md)。
+
+## ライセンス
+
+[Apache-2.0](LICENSE)
