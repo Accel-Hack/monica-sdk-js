@@ -66,6 +66,7 @@ monica.captureMessage("cache miss rate is high", "warning");
 `captureException` / `captureMessage` は event id を返す（`sampleRate` や `beforeSend` で
 落とした場合、`401` で送信が停止している場合は `null`）。イベントは queue に溜め、`batchSize` 件に達するか
 `flushIntervalMs` 経過した時点でまとめて送る。`level: "fatal"` は即座に送る。
+`@ah-monica/cloudflare` は queue を持たず、capture ごとに送信まで行う。
 
 プロセスやハンドラが終わる前に、タイムアウトを指定して送信を待つ。
 
@@ -75,8 +76,8 @@ await monica.close(2_000);   // 以後の capture を止めてから待つ
 ```
 
 `user` / `tags` / `contexts` / `breadcrumbs` / `request` / `fingerprint` は
-capture の第 2 引数で渡す。`@ah-monica/cloudflare` 以外は `setUser` / `addBreadcrumb` で
-クライアントに保持させることもできる。
+capture の第 2 引数で渡す。`@ah-monica/node` と `@ah-monica/next` は `setUser` /
+`addBreadcrumb` でクライアントに保持させることもできる。
 
 ## オプション
 
@@ -116,6 +117,10 @@ breadcrumb の option を持つ。
 - SDK の名前と版
 - `user` / `tags` / `contexts` / `breadcrumbs` / `request` / `fingerprint` のうち、
   アプリケーションが明示的に渡したもの
+
+ただし `@ah-monica/next/server` の `onRequestError` だけは、Next.js から渡される
+route の種別を `contexts.next` と `next.*` tag に足す（[`next/README.md`](next/README.md)）。
+URL と headers は収集しない。
 
 端末情報・IP・cookie・HTTP header・URL を SDK が自動で読むことはない。
 どの値が個人情報かは SDK では判定せず、自動除去もしない。送る値の選択と除去は

@@ -108,7 +108,7 @@ envelope の JSON を 1,000,000 byte 未満に抑えていて、契約上の上�
 | `status` | `number?` | 直前に受理されなかった送信の HTTP status。受理されなかった送信が無い場合と、network 障害で status が無い場合は欄ごと付かない |
 | `issues` | `TransportIssue[]?` | その送信で読めた `error.issues`（実質 `422` のみ） |
 | `error` | `TransportError?` | その送信で読めた `error.code` / `error.message` |
-| `stopped` | `true?` | `401` を受けて client が閉じたあと。一度立つと戻らない |
+| `stopped` | `boolean?` | `401` を受けて client が閉じたあとだけ `true`。一度立つと戻らない |
 
 `status` / `issues` / `error` は flush が返すと忘れる（次の flush には残らない）。
 `stopped` だけは残る。

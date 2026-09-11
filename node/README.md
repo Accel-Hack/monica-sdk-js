@@ -52,9 +52,9 @@ await monica.close(2_000);
 
 ### scope
 
-`setUser` / `addBreadcrumb` はプロセス全体の scope を更新する。`withScope` は
-`AsyncLocalStorage` でその callback の中だけに閉じた scope を作るので、request ごとの
-文脈はこちらに入れる。
+`setUser` / `addBreadcrumb` は現在の scope（`withScope` の外ではプロセス全体の scope）を
+更新する。`withScope` は `AsyncLocalStorage` でその callback の中だけに閉じた scope を
+作るので、request ごとの文脈はこちらに入れる。
 
 ```ts
 app.use((req, res, next) => {

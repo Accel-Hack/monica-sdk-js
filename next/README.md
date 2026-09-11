@@ -16,7 +16,9 @@ root export は持たず、`@ah-monica/next/client` と `@ah-monica/next/server`
 npm install @ah-monica/next
 ```
 
-## Client
+## 使い方
+
+### Client
 
 client bundle に含めてよい public key（`mpk_...`）だけを使う。`msk_...` を渡すと
 `TypeError` を投げる。管理画面で public key の許可 origin も設定する。
@@ -67,7 +69,7 @@ export default function ErrorPage({ error }: { error: Error & { digest?: string 
 
 `setUser` / `addBreadcrumb` / `captureMessage` / `flush` / `close` も使える。
 
-## Server（Node runtime）
+### Server（Node runtime）
 
 secret key（`msk_...`）をサーバ専用の環境変数に置く。`NEXT_PUBLIC_` を付けてはならない。
 `@ah-monica/next/server` は Node runtime 専用で、Edge runtime では使わない。
