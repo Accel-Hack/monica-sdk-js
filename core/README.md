@@ -1,85 +1,101 @@
 # @ah-monica/core
 
-MONICA SDK のランタイム非依存なバッファ・送信処理。通常は直接利用せず、
-Node.js アプリでは `@ah-monica/node` を使う。
+MONICA SDK のランタイム非依存な envelope 組み立て・バッファ・送信。
+`fetch` と `CompressionStream` があるランタイムで動く。依存 package は無い。
 
-この package は PII を推測して自動除去しない。何を送信するか、どの値を
-`beforeSend` で除去するかは利用アプリケーションが管理する。
+Node.js・Cloudflare Workers・Next.js では、この package を直接使わず
+[`@ah-monica/node`](../node/README.md) / [`@ah-monica/cloudflare`](../cloudflare/README.md) /
+[`@ah-monica/next`](../next/README.md) を使う。この README は、対応 adapter の無い
+ランタイムに自分で載せる場合の入口をまとめる。
 
-## 拒否されたときの診断（422 の `issues`）
+共通の使い方・オプション・制約は [ルートの README](../README.md) にある。
 
-`429` を除く 4xx では、ingest が返す body（[`error.json`](../spec/v1/error.json)）を
-読み取り上限 64 KiB で読む。body が空・非 JSON・上限超過・`error.json` に適合しない
-場合は issues 無しで破棄する。既定で `console.warn` に 1 行出すのは `422`・`401`・`413`
-の 3 つで、`401` と `413` は transport につき 1 回だけ出す。
+## インストール
 
+```bash
+npm install @ah-monica/core
 ```
-monica: ingest rejected the envelope with 422 (invalid_envelope): 1 issue(s); $.items[0].request.method: Invalid type: Expected string
-```
 
-`error.code` が読めないときは `(unknown)`、`issues` が無いときは `0 issue(s)` になる。
-API key と envelope 本体はログに出さない。
+## 初期化
 
-出力先は `createFetchTransport` の `onDiagnostic` で差し替える。既定は
-`console.warn`、`null` で無効（結果の `issues` は残る）。
+transport と client を別々に組み立てる。
 
 ```ts
-createFetchTransport({
-  dsn,
-  onDiagnostic(diagnostic) {
-    myLogger.warn(diagnostic.message, { status: diagnostic.status, issues: diagnostic.issues });
-  },
+import { createCoreClient, createFetchTransport } from "@ah-monica/core";
+
+const client = createCoreClient({
+  transport: createFetchTransport({
+    dsn: process.env.MONICA_DSN!,
+    auth: "secret",
+  }),
+  environment: process.env.NODE_ENV ?? "development",
+  release: process.env.GIT_SHA,
 });
 ```
 
-読めた内容は `TransportResult` と `FlushResult` の `status` / `issues` / `error`
-に載る（値があるときだけ現れる）。
+## 使い方
+
+`capture` は item をそのまま受け取る。`event_id` / `timestamp` / `environment` /
+`release` は省略すると補われる。例外から item を組み立てる処理（stacktrace の解析、
+`cause` の連鎖、mechanism の付与）は adapter 側の仕事で、この package には無い。
 
 ```ts
+const eventId = await client.capture({
+  type: "error",
+  platform: "javascript",
+  level: "error",
+  message: "checkout failed",
+  exception: {
+    values: [{ type: "TypeError", value: "checkout failed", mechanism: { type: "generic", handled: true } }],
+  },
+});
+
 const result = await client.flush(2_000);
-if (result.status === 422) {
-  for (const issue of result.issues ?? []) console.log(issue.path, issue.message);
-}
+await client.close(2_000);
 ```
 
-## status ごとの挙動（`transport.json`）
+送信そのものを差し替える場合は `MonicaTransport`（`send(envelope, signal)` が
+`TransportResult` を返す）を実装して `transport` に渡す。`401` を返せば
+`createFetchTransport` と同じように client が停止する。
 
-| status | action | この SDK の挙動 |
-| --- | --- | --- |
-| `202` | `accept` | queue から除去する |
-| `400` | `drop` | 破棄する。再送しない |
-| `401` | `drop_and_stop` | 破棄し、以後 1 回も POST しない（下記） |
-| `413` | `split_and_retry` | item 単位で半分に割って送り直す。1 件でも入らなければ破棄する |
-| `422` | `drop` | 破棄する。`issues` を警告と結果に載せる（上記） |
-| `429` | `wait_retry_after` | `Retry-After`（整数秒、上限 60 秒）だけ待って再送する |
-| `5xx` | `backoff` | `min(1000 * 2^attempt, 30000)` ミリ秒に 50〜100% の jitter を掛けて再送する |
+## オプション
 
-### 401 で送信を止める
+### `createFetchTransport(options)`
 
-`401` を受けると transport はそれ以降 POST せず、client は閉じる。以後の `capture` は
-`null` を返し、queue に残っていた分（停止と同時に `beforeSend` を待っていた分も含む）は
-`discarded` に勘定される。止めたことは既定で 1 回だけ警告し、`FlushResult.stopped` でも
-分かる。`stop` を返さない自前 transport でも、`401` を返せば同じように止まる。
+| option | 型 | default | 説明 |
+| --- | --- | --- | --- |
+| `dsn` | `string` | 必須 | `https://<key>@<ingest-host>`。`localhost` と `127.0.0.1` 以外は https のみ |
+| `auth` | `"public" \| "secret"` | `"secret"` | `secret` は `Authorization: Bearer <key>`、`public` は `X-Monica-Key: <key>` |
+| `fetch` | `typeof fetch` | `globalThis.fetch` | 送信に使う fetch。無いと `Error` |
+| `maxRetries` | `number` | `5` | `429` / `5xx` / network 障害の再送回数 |
+| `requestTimeoutMs` | `number` | `2000` | 1 回の HTTP request の上限 |
+| `onDiagnostic` | `(diagnostic) => void \| null` | `console.warn` に 1 行 | 拒否されたときの診断の受け取り先。`null` で無効 |
 
-```
-monica: ingest rejected the envelope with 401 (invalid_key); no further envelopes will be sent
-```
+### `createCoreClient(options)`
 
-送信を再開するには、正しい鍵で client を組み直す。
+| option | 型 | default | 説明 |
+| --- | --- | --- | --- |
+| `transport` | `MonicaTransport` | 必須 | `createFetchTransport` の戻り値か自前実装 |
+| `environment` | `string` | 必須 | 1〜128 文字。空文字は不可 |
+| `release` | `string` | なし | item の `release` に載る |
+| `sampleRate` | `number` | `1` | 0〜1 |
+| `maxQueueSize` | `number` | `100` | queue の上限。溢れると古い item から捨てる |
+| `batchSize` | `number` | `30` | 1 envelope に載せる item 数。`maxQueueSize` と 100 で頭打ち |
+| `flushIntervalMs` | `number` | `5000` | queue に item がある間の自動送信間隔 |
+| `beforeSend` | `(item, hint) => item \| null \| Promise<...>` | なし | `null` を返すと破棄 |
+| `sdk` | `{ name, version }` | `{ name: "@ah-monica/core", version: <この package の版> }` | envelope の `sdk` |
+| `now` | `() => Date` | `() => new Date()` | `timestamp` と `sent_at` に使う時刻 |
+| `random` | `() => number` | `Math.random` | `sampleRate` の判定に使う乱数 |
+| `generateEventId` | `() => string` | `crypto.randomUUID` | `event_id` の生成 |
 
-### 413 で分割する
+`flush(timeoutMs)` と `close(timeoutMs)` の `timeoutMs` は既定 2,000 ミリ秒。
 
-送信前に、JSON が 1,000,000 byte を超える envelope は SDK 側で分割し、1 件でも
-超えるものは破棄する。それでも `413` が返った場合は `items` を半分に割って送り直す
-（分割の境界は item）。1 件まで割っても `413` ならその item を破棄して `discarded` に
-勘定する。
+## 送信結果と診断
 
-契約上の上限は gzip 後 1 MiB で、SDK は圧縮前で 1,000,000 byte を下回るように
-抑えているため、spec どおりの ingest から `413` は返らない。返った場合は経路上の
-何か（proxy・gateway・WAF）が契約より低い body 上限を持っている。気づけるように、
-分割して受理された場合でも `FlushResult.status` は `413` になり、既定で 1 回だけ
-警告する。
+`flush()` / `close()` が返す `FlushResult`、`onDiagnostic` に渡る `TransportDiagnostic`、
+自前 transport が返す `TransportResult` の各 field は
+[TROUBLESHOOTING.md](../TROUBLESHOOTING.md) にまとめてある。
 
-```
-monica: ingest rejected the envelope with 413 (unknown); splitting and resending. A size limit on the path may be below the 1 MiB (gzip) contract
-```
+## ライセンス
+
+[Apache-2.0](LICENSE)

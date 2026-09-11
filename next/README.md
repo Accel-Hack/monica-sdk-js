@@ -1,9 +1,16 @@
 # @ah-monica/next
 
-MONICAをNext.js App Routerのclient / serverの両方から利用するためのSDK。
-実行環境を誤って混在させないよう、root exportは持たず`/client`と`/server`を明示的に分離する。
+Next.js App Router の client / server の両方から MONICA へエラーを送る SDK。
+root export は持たず、`@ah-monica/next/client` と `@ah-monica/next/server` に分かれている。
 
-## Install
+- Next.js 15.3 以上 17 未満（peer dependency）
+- Node.js 20.9 以上
+- App Router（`instrumentation-client.ts`、`instrumentation.ts`、Error Boundary）
+- Edge runtime は対象外
+
+共通の使い方・オプション・制約は [ルートの README](../README.md) にある。
+
+## インストール
 
 ```bash
 npm install @ah-monica/next
@@ -11,8 +18,8 @@ npm install @ah-monica/next
 
 ## Client
 
-client bundleに含めてよいpublic key（`mpk_...`）だけを使用する。`msk_...`はSDKが拒否する。
-管理画面でpublic keyの許可originも設定する。
+client bundle に含めてよい public key（`mpk_...`）だけを使う。`msk_...` を渡すと
+`TypeError` を投げる。管理画面で public key の許可 origin も設定する。
 
 ```ts
 // src/infrastructure/monica.client.ts
@@ -23,11 +30,14 @@ export const monica = createNextClient({
   environment: process.env.NEXT_PUBLIC_MONICA_ENVIRONMENT ?? "development",
   release: process.env.NEXT_PUBLIC_MONICA_RELEASE,
   beforeSend(item) {
-    // PIIを判定・除去できるのはアプリケーションだけなので、ここで処理する。
+    // どの値が個人情報かはアプリケーション固有。送ってよい値だけを残す。
     return item;
   },
 });
 ```
+
+`installGlobalHandlers()` は `error` と `unhandledrejection` を購読する。
+何度呼んでも listener は 1 組だけで、戻り値を呼ぶと解除できる。
 
 ```ts
 // instrumentation-client.ts
@@ -36,7 +46,7 @@ import { monica } from "./src/infrastructure/monica.client";
 monica.installGlobalHandlers();
 ```
 
-Error Boundaryから明示的に送る場合:
+Error Boundary から明示的に送る場合:
 
 ```tsx
 "use client";
@@ -55,11 +65,12 @@ export default function ErrorPage({ error }: { error: Error & { digest?: string 
 }
 ```
 
+`setUser` / `addBreadcrumb` / `captureMessage` / `flush` / `close` も使える。
+
 ## Server（Node runtime）
 
-server側はsecret key（`msk_...`）をサーバ専用環境変数に保存する。
-`MONICA_DSN`に`NEXT_PUBLIC_`を付けてはならない。`@ah-monica/next/server`はNode runtime専用で、
-Edge runtimeでは使用しない。
+secret key（`msk_...`）をサーバ専用の環境変数に置く。`NEXT_PUBLIC_` を付けてはならない。
+`@ah-monica/next/server` は Node runtime 専用で、Edge runtime では使わない。
 
 ```ts
 // src/infrastructure/monica.server.ts
@@ -67,10 +78,10 @@ import { createNextServerClient } from "@ah-monica/next/server";
 
 export const monica = createNextServerClient({
   dsn: process.env.MONICA_DSN!,
-  environment: process.env.MONICA_ENVIRONMENT ?? process.env.NODE_ENV,
+  environment: process.env.MONICA_ENVIRONMENT ?? process.env.NODE_ENV!,
   release: process.env.MONICA_RELEASE,
   beforeSend(item) {
-    // request、userなどを追加する場合も、この境界でPIIを処理する。
+    // request や user を足す場合も、この境界で個人情報を処理する。
     return item;
   },
 });
@@ -83,46 +94,49 @@ import { monica } from "./src/infrastructure/monica.server";
 export const onRequestError = monica.onRequestError;
 ```
 
-`onRequestError`は送信完了までawaitする。Next.jsから渡される実URL・headersは、PIIやsecretを
-含む可能性があるため自動収集しない。route templateやrouter種別だけを`contexts.next`へ追加する。
-Server ActionやRoute Handlerでは`monica.captureException(error)`も直接利用できる。
+`onRequestError` は送信完了まで await する。Next.js から渡される URL と headers は
+収集せず、`contexts.next` に route の種別だけを足す（`routerKind`、`routePath`、
+`routeType`、`renderSource`、`revalidateReason`、`renderType` のうち渡されたもの）。
+tag には `next.router_kind` と `next.route_type` が付く。
 
-## 送信が拒否されたとき
+Server Action や Route Handler では `monica.captureException(error)` を直接呼べる。
+server client は [`@ah-monica/node`](../node/README.md) のクライアントと同じ API
+（`withScope`、`installProcessHooks` など）を持つ。
 
-`422`（envelope schema 不正）のとき、client / server とも既定で`console.warn`へ
-1行出す。
+## オプション
 
-```
-monica: ingest rejected the envelope with 422 (invalid_envelope): 1 issue(s); $.items[0].request.method: Invalid type: Expected string
-```
+client / server とも同じ option を取る（server は `@ah-monica/node` と同一）。
 
-browserのconsoleに出したくない場合は`onDiagnostic`を渡して差し替える（`null`で無効化）。
-`flush()`の戻り値の`status` / `issues` / `error`からも取得できる。
+| option | 型 | default | 説明 |
+| --- | --- | --- | --- |
+| `dsn` | `string` | 必須 | client は `mpk_...`、server は `msk_...` |
+| `environment` | `string` | 必須 | 1〜128 文字 |
+| `release` | `string` | なし | item の `release` に載る |
+| `sampleRate` | `number` | `1` | 0〜1 |
+| `maxBreadcrumbs` | `number` | `50` | 保持する breadcrumb 数 |
+| `maxQueueSize` | `number` | `100` | queue の上限 |
+| `batchSize` | `number` | `30` | 1 envelope に載せる item 数 |
+| `flushIntervalMs` | `number` | `5000` | queue に item がある間の自動送信間隔 |
+| `requestTimeoutMs` | `number` | `2000` | 1 回の HTTP request の上限 |
+| `maxRetries` | `number` | `5` | `429` / `5xx` / network 障害の再送回数 |
+| `onDiagnostic` | `(diagnostic) => void \| null` | `console.warn` に 1 行 | 拒否されたときの診断の受け取り先。`null` で無効 |
+| `beforeSend` | `(item, hint) => item \| null \| Promise<...>` | なし | `null` を返すと破棄 |
+| `fetch` | `typeof fetch` | `globalThis.fetch` | 送信に使う fetch |
 
-`401`（public keyの失効、許可originの不一致）を受けると、そのclientからは以後
-1回もPOSTしない。`flush()`の戻り値の`stopped: true`と次の1行で分かる。
+## 送信結果と診断
 
-```
-monica: ingest rejected the envelope with 401 (invalid_key); no further envelopes will be sent
-```
+拒否されたときは client / server とも既定で `console.warn` に 1 行出る（`422` / `401` / `413`）。
+ブラウザの console に出したくない場合は `onDiagnostic` で差し替える（`null` で無効）。
+`flush()` の戻り値の `status` / `issues` / `error` / `stopped` からも取れる。
+詳しくは [TROUBLESHOOTING.md](../TROUBLESHOOTING.md)。
 
-`413`（body上限超過）を受けると`items`を半分に割って送り直す。SDKは契約（gzip後
-1 MiB）を下回るサイズしか送らないので、返るのは経路上のproxyやgatewayが契約より
-低い上限を持っているとき。分割して受理されても`flush()`の戻り値の`status`は`413`に
-なり、次の1行をtransportにつき1回だけ出す。
+## 制約
 
-```
-monica: ingest rejected the envelope with 413 (unknown); splitting and resending. A size limit on the path may be below the 1 MiB (gzip) contract
-```
+- `@ah-monica/next/client` に secret key（`msk_...`）を渡すと `TypeError` を投げる。
+- client の `installGlobalHandlers()` は subresource（`<img>` / `<script>` / `<link>`）の
+  読み込み失敗を送らない。送るのは未捕捉の例外と unhandled rejection だけ。
+- root export は無い。`@ah-monica/next` をそのまま import することはできない。
 
-## PII
+## ライセンス
 
-SDKはPIIを推測して除去しない。アプリケーションが`beforeSend`で削除・マスク・破棄する。
-client/serverとも、明示的に渡した`user`、`request`、`contexts`などはそのまま送信対象になる。
-
-## Runtime support
-
-- Next.js 15 / 16
-- Node.js 20.9以上
-- App Router（`instrumentation-client.ts`、`instrumentation.ts`、Error Boundary）
-- Edge runtimeは対象外。必要な場合はruntime-neutralな別adapterを使用する。
+[Apache-2.0](LICENSE)
