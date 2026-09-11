@@ -1,6 +1,6 @@
 {
   "name": "@ah-monica/cloudflare",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Cloudflare Workers adapter for sending application errors to MONICA",
   "license": "Apache-2.0",
   "type": "module",
@@ -30,7 +30,7 @@
     "directory": "cloudflare"
   },
   "dependencies": {
-    "@ah-monica/core": "0.2.0"
+    "@ah-monica/core": "0.2.1"
   },
   "devDependencies": {
     "@types/bun": "^1.2.21",

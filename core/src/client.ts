@@ -36,7 +36,8 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
   let closed = false;
   // 直前に受理されなかった送信の status / issues / error。flush が返して忘れる。
   // 422 の issues は「送っているのに届かない」原因そのものなので、警告を読めない
-  // 経路（テスト・バッチ・自前の監視）からも取れるようにしておく。
+  // 経路（テスト・バッチ・自前の監視）からも取れるようにしておく。413 も、分割に
+  // 成功して accepted: true で返るときでさえここには残す（deliver 参照）。
   let lastRejection: RejectionDetails | undefined;
   // transport.json: 401 は drop_and_stop。一度立つと戻らない
   let stopped = false;
@@ -107,6 +108,11 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
     // 自前 transport が stop を返さなくても、契約（drop_and_stop）どおり止める
     if (result.stop || result.status === 401) stopSending();
     if (result.accepted) return true;
+    // 分割が成功すると deliver は true を返すので、ここで書かないと 413 を受けた
+    // 事実がどこにも残らない。送信前に JSON を 1,000,000 byte 未満に抑えていて
+    // 契約上の上限は gzip 後 1 MiB なので、spec どおりの ingest から 413 は返らない。
+    // 経路上の何かが契約と食い違っている信号として、分割に入る前に記録する
+    lastRejection = rejectionDetails(result);
     if (result.status === 413 && items.length > 1 && !stopped) {
       // 分割の境界は item（ingest.md）。捨てた分の勘定は前半の envelope にだけ載せ、
       // sent_at は分割前のものを使い回す（分割は 1 回の送信の続きなので）
@@ -116,7 +122,6 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
       return first && second;
     }
     discarded += items.length + reportedDiscarded;
-    lastRejection = rejectionDetails(result);
     return false;
   }
 

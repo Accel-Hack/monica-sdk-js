@@ -67,6 +67,15 @@ monica: ingest rejected the envelope with 422 (invalid_envelope): 1 issue(s); $.
 monica: ingest rejected the envelope with 401 (invalid_key); no further envelopes will be sent
 ```
 
+`413`（body上限超過）を受けると`items`を半分に割って送り直す。SDKは契約（gzip後
+1 MiB）を下回るサイズしか送らないので、返るのは経路上のproxyやgatewayが契約より
+低い上限を持っているとき。分割して受理されても`flush()`の戻り値の`status`は`413`に
+なり、次の1行をtransportにつき1回だけ出す。
+
+```
+monica: ingest rejected the envelope with 413 (unknown); splitting and resending. A size limit on the path may be below the 1 MiB (gzip) contract
+```
+
 ## PII方針
 
 SDKは、例外message、stack、request、contextがPIIかどうかを推測せず、自動除去も

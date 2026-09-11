@@ -10,7 +10,8 @@ Node.js アプリでは `@ah-monica/node` を使う。
 
 `429` を除く 4xx では、ingest が返す body（[`error.json`](../spec/v1/error.json)）を
 読み取り上限 64 KiB で読む。body が空・非 JSON・上限超過・`error.json` に適合しない
-場合は issues 無しで破棄する。`422` は既定で `console.warn` に 1 行出す。
+場合は issues 無しで破棄する。既定で `console.warn` に 1 行出すのは `422`・`401`・`413`
+の 3 つで、`401` と `413` は transport につき 1 回だけ出す。
 
 ```
 monica: ingest rejected the envelope with 422 (invalid_envelope): 1 issue(s); $.items[0].request.method: Invalid type: Expected string
@@ -72,3 +73,13 @@ monica: ingest rejected the envelope with 401 (invalid_key); no further envelope
 超えるものは破棄する。それでも `413` が返った場合は `items` を半分に割って送り直す
 （分割の境界は item）。1 件まで割っても `413` ならその item を破棄して `discarded` に
 勘定する。
+
+契約上の上限は gzip 後 1 MiB で、SDK は圧縮前で 1,000,000 byte を下回るように
+抑えているため、spec どおりの ingest から `413` は返らない。返った場合は経路上の
+何か（proxy・gateway・WAF）が契約より低い body 上限を持っている。気づけるように、
+分割して受理された場合でも `FlushResult.status` は `413` になり、既定で 1 回だけ
+警告する。
+
+```
+monica: ingest rejected the envelope with 413 (unknown); splitting and resending. A size limit on the path may be below the 1 MiB (gzip) contract
+```
