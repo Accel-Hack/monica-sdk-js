@@ -18,8 +18,9 @@ export interface FetchTransportOptions {
    * ingest が envelope を拒否したときの診断の受け取り先。既定は `console.warn` に
    * 1 行出す。`null` を渡すと何も出さない（結果の `issues` / `error` は残る）。
    *
-   * 422 は payload を直せる情報なので既定で出す。ここが throw しても送信結果は
-   * 変わらない。
+   * 既定で出すのは 422（payload を直せる情報）・401（以後止めたこと）・413（経路上の
+   * 上限が契約より低いこと）の 3 つ。401 と 413 はこの transport につき 1 回だけ。
+   * ここが throw しても送信結果は変わらない。
    */
   onDiagnostic?: TransportDiagnosticHandler | null;
 }
@@ -54,6 +55,9 @@ export function createFetchTransport(options: FetchTransportOptions): MonicaTran
   // transport.json: 401 は drop_and_stop。鍵が失効した長寿命プロセスが、絶対に
   // 受理されない endpoint へ flushIntervalMs ごとに永久に POST し続けるのを止める。
   let stopped = false;
+  // 413 は分割のたびに返るので、警告はこの transport につき 1 回だけにする。
+  // spec どおりの ingest なら返らない status で、経路の異常は 1 行出れば伝わる。
+  let warnedTooLarge = false;
 
   return {
     async send(envelope, outerSignal): Promise<TransportResult> {
@@ -97,8 +101,14 @@ export function createFetchTransport(options: FetchTransportOptions): MonicaTran
             const details = await readErrorDetails(response, requestTimeoutMs);
             // 422（payload を直せる情報）と 401（以後止めたこと）は既定で警告する。
             // どちらも 1 envelope につき 1 回で、401 は止めたあと POST しないので
-            // 二度目は出ない。
-            if (response.status === 422 || response.status === 401) {
+            // 二度目は出ない。413（経路上の上限が契約より低い）は分割のたびに返るので
+            // 1 回に落とす。
+            if (
+              response.status === 422 ||
+              response.status === 401 ||
+              (response.status === 413 && !warnedTooLarge)
+            ) {
+              if (response.status === 413) warnedTooLarge = true;
               notify(onDiagnostic, { status: response.status, ...details });
             }
             // transport.json: 401 は drop_and_stop。この transport からは以後 POST しない。
@@ -302,6 +312,11 @@ function formatDiagnostic(
   // 401 は payload の問題ではなく鍵の問題。直すべきことが違うので文面も分ける
   if (status === 401) {
     return `monica: ingest rejected the envelope with 401 (${code}); no further envelopes will be sent`;
+  }
+  // 413 も payload ではなく経路の問題。SDK は送信前に JSON を 1,000,000 byte 未満に
+  // 抑えていて契約上の上限は gzip 後 1 MiB なので、spec どおりの ingest なら返らない
+  if (status === 413) {
+    return `monica: ingest rejected the envelope with 413 (${code}); splitting and resending. A size limit on the path may be below the 1 MiB (gzip) contract`;
   }
   const head = `monica: ingest rejected the envelope with ${status} (${code}): ${issues.length} issue(s)`;
   if (issues.length === 0) return head;

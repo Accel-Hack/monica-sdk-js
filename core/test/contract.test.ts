@@ -1303,7 +1303,13 @@ describe("public contract: transport.json の status ごとの挙動", () => {
       },
     });
     for (let index = 0; index < 8; index += 1) await client.capture(itemNamed(`${index}`));
-    expect(await client.flush()).toEqual({ accepted: true, discarded: 0, remaining: 0 });
+    // 分割が成功しても、413 を受けたことは status に残る（受理されなかった送信の status）
+    expect(await client.flush()).toEqual({
+      accepted: true,
+      discarded: 0,
+      remaining: 0,
+      status: 413,
+    });
 
     // 8 -> 4+4 -> 2+2+2+2。item は分かれず、順番も保たれる
     expect(delivered.map((sent) => sent.items.length)).toEqual([2, 2, 2, 2]);
@@ -1318,6 +1324,101 @@ describe("public contract: transport.json の status ごとの挙動", () => {
       "7",
     ]);
     for (const sent of delivered) expect(validate(sent), describeErrors(validate)).toBe(true);
+  });
+
+  test("split_and_retry（413）: 413 は次の flush には持ち越さない", async () => {
+    let seen = 0;
+    const client = createCoreClient({
+      environment: "production",
+      batchSize: 2,
+      maxQueueSize: 2,
+      flushIntervalMs: 60_000,
+      transport: {
+        async send(sent) {
+          seen += 1;
+          if (sent.items.length > 1) return { accepted: false, status: 413 };
+          return { accepted: true, status: 202 };
+        },
+      },
+    });
+    for (const n of [1, 2]) await client.capture(itemNamed(`${n}`));
+    expect((await client.flush()).status).toBe(413);
+    expect(seen).toBe(3);
+
+    // status は「直前に受理されなかった送信」のもの。載せた分は忘れる
+    await client.capture(itemNamed("3"));
+    expect(await client.flush()).toEqual({ accepted: true, discarded: 0, remaining: 0 });
+  });
+
+  test("split_and_retry（413）: 分割後に別の理由で拒否されたらそちらを載せる", async () => {
+    const client = createCoreClient({
+      environment: "production",
+      batchSize: 2,
+      maxQueueSize: 2,
+      flushIntervalMs: 60_000,
+      transport: {
+        async send(sent) {
+          if (sent.items.length > 1) return { accepted: false, status: 413 };
+          return {
+            accepted: false,
+            status: 422,
+            error: { code: "invalid_envelope", message: "invalid" },
+          };
+        },
+      },
+    });
+    for (const n of [1, 2]) await client.capture(itemNamed(`${n}`));
+    expect(await client.flush()).toEqual({
+      accepted: false,
+      discarded: 2,
+      remaining: 0,
+      status: 422,
+      error: { code: "invalid_envelope", message: "invalid" },
+    });
+  });
+
+  test("split_and_retry（413）: 経路上の上限を 1 回だけ警告する", async () => {
+    const warned: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => warned.push(args.map(String).join(" "));
+    try {
+      const transport = createFetchTransport({
+        dsn,
+        maxRetries: 3,
+        fetch: async () => new Response(null, { status: 413 }),
+      });
+      // client は 413 のたびに割って送り直すので、そのたびには出さない
+      await transport.send(envelope);
+      await transport.send(envelope);
+      expect(warned).toEqual([
+        "monica: ingest rejected the envelope with 413 (unknown); splitting and resending. A size limit on the path may be below the 1 MiB (gzip) contract",
+      ]);
+    } finally {
+      console.warn = original;
+    }
+  });
+
+  test("split_and_retry（413）: error.code が読めればそれを載せる", async () => {
+    const seen: TransportDiagnostic[] = [];
+    const transport = createFetchTransport({
+      dsn,
+      maxRetries: 3,
+      onDiagnostic: (diagnostic) => seen.push(diagnostic),
+      fetch: async () =>
+        new Response(JSON.stringify({ error: { code: "payload_too_large", message: "too big" } }), {
+          status: 413,
+        }),
+    });
+    await transport.send(envelope);
+    expect(seen).toEqual([
+      {
+        status: 413,
+        issues: [],
+        error: { code: "payload_too_large", message: "too big" },
+        message:
+          "monica: ingest rejected the envelope with 413 (payload_too_large); splitting and resending. A size limit on the path may be below the 1 MiB (gzip) contract",
+      },
+    ]);
   });
 
   test("split_and_retry（413）: 1 件でも 413 なら捨てて discarded に勘定する", async () => {

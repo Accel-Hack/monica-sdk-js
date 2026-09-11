@@ -117,8 +117,8 @@ export interface TransportResult {
 }
 
 /**
- * ingest が envelope を拒否したときに 1 envelope につき 1 回渡される診断。
- * retry のたびには渡さない。
+ * ingest が envelope を拒否したときに渡される診断。retry のたびには渡さない。
+ * 422 は 1 envelope につき 1 回、401 と 413 は transport につき 1 回。
  */
 export interface TransportDiagnostic {
   status: number;
@@ -169,6 +169,10 @@ export interface FlushResult {
   /**
    * 直前に受理されなかった送信の HTTP status。前回 flush 以降に受理されなかった
    * 送信が無い場合、または network 障害で status が無い場合は欄ごと無い。
+   *
+   * 分割して送り直した `413`（`split_and_retry`）も、割った先がすべて受理されて
+   * `accepted: true` になる場合を含めてここに残る。経路上の何かが契約より低い
+   * body 上限を持っている信号なので、握り潰さない。
    */
   status?: number;
   /** その送信で読めた `error.issues`（実質 422 のみ）。 */

@@ -75,6 +75,17 @@ monica: ingest rejected the envelope with 401 (invalid_key); no further envelope
 `discarded`に勘定される。`stopped: true`で判定できる。
 送信を再開するには正しい鍵で`createNodeClient`を呼び直す。
 
+### bodyが大きすぎると言われたとき（413）
+
+SDKは契約（gzip後1 MiB）を下回るサイズしか送らないため、specどおりのingestから
+`413`は返らない。返った場合は経路上のproxyやgatewayが契約より低いbody上限を
+持っている。SDKは`items`を半分に割って送り直し、割った先がすべて受理されても
+`flush()`の戻り値の`status`は`413`のままにする。警告はtransportにつき1回だけ。
+
+```
+monica: ingest rejected the envelope with 413 (unknown); splitting and resending. A size limit on the path may be below the 1 MiB (gzip) contract
+```
+
 ## PII方針
 
 SDKは、文字列やオブジェクトがPIIかどうかを推測せず、自動除去もしない。
