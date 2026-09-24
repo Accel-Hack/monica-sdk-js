@@ -40,6 +40,37 @@ function createClient(env: Env) {
 }
 ```
 
+`MONICA_RELEASE` には deploy する git の commit sha を入れる（例: `wrangler deploy --var MONICA_RELEASE:$(git rev-parse HEAD)`）。
+ブラウザ側の SDK にも同じ値を渡すと、Worker とブラウザの event が同じ release に揃う。
+
+DSN を Secrets Store に置く場合、binding の値は `get()` で非同期に読むので、client は
+handler の中で request ごとに作る（[制約](#制約) のとおり request ごとに作ってよい）。
+`get()` は secret が無いと例外を投げるので、`undefined` に落として何も送らない client にする。
+
+```ts
+interface Env {
+  MONICA_DSN: SecretsStoreSecret;
+  MONICA_ENVIRONMENT: string;
+  MONICA_RELEASE?: string;
+}
+
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const monica = createCloudflareClient({
+      dsn: await env.MONICA_DSN.get().catch(() => undefined),
+      environment: env.MONICA_ENVIRONMENT,
+      release: env.MONICA_RELEASE,
+    });
+    try {
+      return await handleRequest(request, env);
+    } catch (error) {
+      monica.captureExceptionInBackground(ctx, error);
+      return new Response("Internal Server Error", { status: 500 });
+    }
+  },
+};
+```
+
 ## 使い方
 
 `captureException()` は capture と flush の両方を終えてから解決する Promise を返す。
