@@ -13,6 +13,9 @@ function manifest(name: string) {
     name: string;
     version: string;
     dependencies?: Record<string, string>;
+    main?: string;
+    types?: string;
+    exports?: Record<string, { types?: string; import?: string }>;
   };
 }
 
@@ -36,6 +39,18 @@ describe("versions", () => {
       const source = readFileSync(resolve(ROOT, VERSION_FILES[name]), "utf8");
       const found = /SDK_VERSION = "([^"]+)"/.exec(source);
       expect(found?.[1], VERSION_FILES[name]).toBe(core);
+    }
+  });
+
+  // moduleResolution: "node" は exports を読まない。top-level の types / main が無いと
+  // 型が解決できず any になる（@ah-monica/browser が core を参照する経路でも起きる）
+  test("entry が 1 つの package は top-level の types / main を exports と揃えて持つ", () => {
+    for (const name of PACKAGES) {
+      const { exports = {}, main, types } = manifest(name);
+      const entry = exports["."];
+      if (!entry || Object.keys(exports).length !== 1) continue;
+      expect(types, `${name} types`).toBe(entry.types);
+      expect(main, `${name} main`).toBe(entry.import);
     }
   });
 });
