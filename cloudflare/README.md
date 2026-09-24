@@ -44,8 +44,9 @@ function createClient(env: Env) {
 ブラウザ側の SDK にも同じ値を渡すと、Worker とブラウザの event が同じ release に揃う。
 
 DSN を Secrets Store に置く場合、binding の値は `get()` で非同期に読むので、client は
-handler の中で request ごとに作る（[制約](#制約) のとおり request ごとに作ってよい）。
-`get()` は secret が無いと例外を投げるので、`undefined` に落として何も送らない client にする。
+handler の中で作る（[制約](#制約) のとおり request ごとに作ってよい）。例外を送るだけなら
+`catch` の中で作れば、正常な request では `get()` を呼ばない。`get()` は secret が無いと
+例外を投げるので、`undefined` に落として何も送らない client にする。
 
 ```ts
 interface Env {
@@ -56,14 +57,14 @@ interface Env {
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const monica = createCloudflareClient({
-      dsn: await env.MONICA_DSN.get().catch(() => undefined),
-      environment: env.MONICA_ENVIRONMENT,
-      release: env.MONICA_RELEASE,
-    });
     try {
       return await handleRequest(request, env);
     } catch (error) {
+      const monica = createCloudflareClient({
+        dsn: await env.MONICA_DSN.get().catch(() => undefined),
+        environment: env.MONICA_ENVIRONMENT,
+        release: env.MONICA_RELEASE,
+      });
       monica.captureExceptionInBackground(ctx, error);
       return new Response("Internal Server Error", { status: 500 });
     }
