@@ -9,7 +9,8 @@ import type {
 } from "./types.js";
 
 export interface FetchTransportOptions {
-  dsn: string;
+  /** 未指定・空文字・空白だけなら何も送らない transport を返す */
+  dsn?: string;
   auth?: "public" | "secret";
   fetch?: FetchLike;
   maxRetries?: number;
@@ -36,7 +37,16 @@ export type FetchLike = (
  */
 const MAX_ERROR_BODY_BYTES = 64 * 1024;
 
+/**
+ * dsn が無いときの transport。createCoreClient はこれを受け取ると、最初から閉じた
+ * （capture が `null` を返し、timer も送信も持たない）client を作る。
+ */
+export const NOOP_TRANSPORT: MonicaTransport = {
+  send: async () => ({ accepted: false }),
+};
+
 export function createFetchTransport(options: FetchTransportOptions): MonicaTransport {
+  if (!options.dsn?.trim()) return NOOP_TRANSPORT;
   const { endpoint, key } = parseDsn(options.dsn);
   const auth = options.auth ?? "secret";
   const fetchImplementation = options.fetch ?? globalThis.fetch;

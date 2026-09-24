@@ -25,7 +25,7 @@ monica: ingest rejected the envelope with 413 (unknown); splitting and resending
 
 ```ts
 createNodeClient({
-  dsn: process.env.MONICA_DSN!,
+  dsn: process.env.MONICA_DSN,
   environment: "production",
   onDiagnostic(diagnostic) {
     logger.warn(diagnostic.message, { status: diagnostic.status, issues: diagnostic.issues });
@@ -149,6 +149,7 @@ status ごとの扱いは公開契約バンドルの `transport.json` に従う�
 
 **MONICA に 1 件も届かない**
 
+- `dsn` が未指定・空文字になっている。この場合 SDK は何も送らず、警告も出さない。
 - プロセスが終わる前に送信が終わっていない。終了前に `await monica.flush(2_000)` か
   `await monica.close(2_000)` を呼ぶ。
 - Cloudflare Workers で送信 Promise を `ctx.waitUntil()` に渡していない。handler が返ると

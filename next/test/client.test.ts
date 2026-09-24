@@ -43,6 +43,18 @@ describe("createNextClient", () => {
     });
   });
 
+  test("sends nothing when the dsn is blank", async () => {
+    const client = createNextClient({
+      dsn: " ",
+      environment: "test",
+      fetch: async () => {
+        throw new Error("fetch should not be called");
+      },
+    });
+    expect(await client.captureException(new Error("x"))).toBeNull();
+    expect((await client.flush()).accepted).toBe(true);
+  });
+
   test("rejects a secret key before it can enter client code", () => {
     expect(() =>
       createNextClient({

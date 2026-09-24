@@ -28,7 +28,7 @@ client bundle に含めてよい public key（`mpk_...`）だけを使う。`msk
 import { createNextClient } from "@ah-monica/next/client";
 
 export const monica = createNextClient({
-  dsn: process.env.NEXT_PUBLIC_MONICA_DSN!,
+  dsn: process.env.NEXT_PUBLIC_MONICA_DSN,
   environment: process.env.NEXT_PUBLIC_MONICA_ENVIRONMENT ?? "development",
   release: process.env.NEXT_PUBLIC_MONICA_RELEASE,
   beforeSend(item) {
@@ -79,7 +79,7 @@ secret key（`msk_...`）をサーバ専用の環境変数に置く。`NEXT_PUBL
 import { createNextServerClient } from "@ah-monica/next/server";
 
 export const monica = createNextServerClient({
-  dsn: process.env.MONICA_DSN!,
+  dsn: process.env.MONICA_DSN,
   environment: process.env.MONICA_ENVIRONMENT ?? process.env.NODE_ENV!,
   release: process.env.MONICA_RELEASE,
   beforeSend(item) {
@@ -111,7 +111,7 @@ client / server とも同じ option を取る（server は `@ah-monica/node` と
 
 | option | 型 | default | 説明 |
 | --- | --- | --- | --- |
-| `dsn` | `string` | 必須 | client は `mpk_...`、server は `msk_...` |
+| `dsn` | `string` | なし | client は `mpk_...`、server は `msk_...`。未指定・空文字なら何も送らない |
 | `environment` | `string` | 必須 | 1〜128 文字 |
 | `release` | `string` | なし | item の `release` に載る |
 | `sampleRate` | `number` | `1` | 0〜1 |

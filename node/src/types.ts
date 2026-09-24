@@ -10,7 +10,8 @@ import type {
 } from "@ah-monica/core";
 
 export interface NodeClientOptions {
-  dsn: string;
+  /** 未指定・空文字・空白だけなら何も送らない */
+  dsn?: string;
   environment: string;
   release?: string;
   sampleRate?: number;

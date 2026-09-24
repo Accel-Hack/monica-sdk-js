@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createFetchTransport, type MonicaEnvelope } from "../src/index.js";
+import { createCoreClient, createFetchTransport, type MonicaEnvelope } from "../src/index.js";
 
 test("fetch transport sends a gzip envelope with secret authentication", async () => {
   let request: Request | undefined;
@@ -26,6 +26,24 @@ test("fetch transport sends a gzip envelope with secret authentication", async (
     request?.body?.pipeThrough(new DecompressionStream("gzip")),
   );
   expect(await decompressed.json()).toEqual(envelope);
+});
+
+test("a missing dsn sends nothing, but a malformed one still throws", async () => {
+  const fetch = async (): Promise<Response> => {
+    throw new Error("fetch should not be called");
+  };
+  for (const dsn of [undefined, null as unknown as string, "", "  "]) {
+    const client = createCoreClient({
+      transport: createFetchTransport({ dsn, fetch }),
+      environment: "test",
+    });
+    expect(
+      await client.capture({ type: "error", platform: "javascript", level: "fatal", message: "x" }),
+    ).toBeNull();
+    expect(await client.flush()).toEqual({ accepted: true, discarded: 0, remaining: 0 });
+    expect(await client.close()).toEqual({ accepted: true, discarded: 0, remaining: 0 });
+  }
+  expect(() => createFetchTransport({ dsn: "not a url" })).toThrow("valid URL");
 });
 
 test("fetch transport does not retry a non-429 client error", async () => {
