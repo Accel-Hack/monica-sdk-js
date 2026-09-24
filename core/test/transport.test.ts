@@ -32,7 +32,7 @@ test("a missing dsn sends nothing, but a malformed one still throws", async () =
   const fetch = async (): Promise<Response> => {
     throw new Error("fetch should not be called");
   };
-  for (const dsn of [undefined, null as unknown as string, "", "  "]) {
+  for (const dsn of [undefined, null, "", "  "]) {
     const client = createCoreClient({
       transport: createFetchTransport({ dsn, fetch }),
       environment: "test",

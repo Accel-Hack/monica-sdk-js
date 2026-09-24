@@ -11,7 +11,7 @@ import type {
 
 export interface NodeClientOptions {
   /** 未指定・空文字・空白だけなら何も送らない */
-  dsn?: string;
+  dsn?: string | null;
   environment: string;
   release?: string;
   sampleRate?: number;

@@ -64,7 +64,7 @@ await client.close(2_000);
 
 | option | 型 | default | 説明 |
 | --- | --- | --- | --- |
-| `dsn` | `string` | なし | `https://<key>@<ingest-host>`。`localhost` と `127.0.0.1` 以外は https のみ。未指定・空文字なら何も送らない |
+| `dsn` | `string \| null` | なし | `https://<key>@<ingest-host>`。`localhost` と `127.0.0.1` 以外は https のみ。未指定・空文字なら何も送らない |
 | `auth` | `"public" \| "secret"` | `"secret"` | `secret` は `Authorization: Bearer <key>`、`public` は `X-Monica-Key: <key>` |
 | `fetch` | `typeof fetch` | `globalThis.fetch` | 送信に使う fetch。無いと `Error` |
 | `maxRetries` | `number` | `5` | `429` / `5xx` / network 障害の再送回数 |

@@ -10,7 +10,7 @@ import type {
 
 export interface FetchTransportOptions {
   /** 未指定・空文字・空白だけなら何も送らない transport を返す */
-  dsn?: string;
+  dsn?: string | null;
   auth?: "public" | "secret";
   fetch?: FetchLike;
   maxRetries?: number;

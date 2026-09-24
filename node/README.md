@@ -87,7 +87,7 @@ uninstall();
 
 | option | 型 | default | 説明 |
 | --- | --- | --- | --- |
-| `dsn` | `string` | なし | `https://msk_...@<ingest-host>`。未指定・空文字なら何も送らない |
+| `dsn` | `string \| null` | なし | `https://msk_...@<ingest-host>`。未指定・空文字なら何も送らない |
 | `environment` | `string` | 必須 | 1〜128 文字 |
 | `release` | `string` | なし | item の `release` に載る |
 | `sampleRate` | `number` | `1` | 0〜1 |

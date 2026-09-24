@@ -14,7 +14,7 @@ export interface NextClientOptions {
    * A public DSN containing an `mpk_...` key. Never use an `msk_...` secret in client code.
    * 未指定・空文字・空白だけなら何も送らない。
    */
-  dsn?: string;
+  dsn?: string | null;
   environment: string;
   release?: string;
   sampleRate?: number;

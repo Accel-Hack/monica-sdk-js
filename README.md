@@ -86,7 +86,7 @@ capture の第 2 引数で渡す。`@ah-monica/node` と `@ah-monica/next` は `
 
 | option | 型 | default | 説明 |
 | --- | --- | --- | --- |
-| `dsn` | `string` | なし | `https://<key>@<ingest-host>`。`localhost` と `127.0.0.1` 以外は https のみ。未指定・空文字なら何も送らない |
+| `dsn` | `string \| null` | なし | `https://<key>@<ingest-host>`。`localhost` と `127.0.0.1` 以外は https のみ。未指定・空文字なら何も送らない |
 | `environment` | `string` | 必須 | 1〜128 文字。空文字は不可 |
 | `release` | `string` | なし | item の `release` に載る |
 | `sampleRate` | `number` | `1` | 0〜1。capture ごとに判定する |
