@@ -87,7 +87,7 @@ capture の第 2 引数で渡す。`@ah-monica/node` と `@ah-monica/next` は `
 | --- | --- | --- | --- |
 | `dsn` | `string` | 必須 | `https://<key>@<ingest-host>`。`localhost` と `127.0.0.1` 以外は https のみ |
 | `environment` | `string` | 必須 | 1〜128 文字。空文字は不可 |
-| `release` | `string` | なし | item の `release` に載る |
+| `release` | `string` | なし | item の `release` に載る。build / deploy 時に git の commit sha を注入して渡す。server とブラウザで同じ値にすると event が揃う |
 | `sampleRate` | `number` | `1` | 0〜1。capture ごとに判定する |
 | `beforeSend` | `(item, hint) => item \| null \| Promise<...>` | なし | 送信直前に item を書き換える。`null` を返すと破棄 |
 | `onDiagnostic` | `(diagnostic) => void \| null` | `console.warn` に 1 行 | 拒否されたときの診断の受け取り先。`null` で無効 |
