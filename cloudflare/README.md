@@ -81,7 +81,7 @@ Worker の外側で起きた未捕捉例外まで集めたい場合は Tail Work
 
 | option | 型 | default | 説明 |
 | --- | --- | --- | --- |
-| `dsn` | `string` | 必須 | `https://msk_...@<ingest-host>` |
+| `dsn` | `string \| null` | なし | `https://msk_...@<ingest-host>`。未指定・空文字なら何も送らない |
 | `environment` | `string` | 必須 | 1〜128 文字 |
 | `release` | `string` | なし | item の `release` に載る |
 | `sampleRate` | `number` | `1` | 0〜1 |

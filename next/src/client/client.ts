@@ -20,7 +20,7 @@ interface BrowserEventTarget {
 }
 
 export function createNextClient(options: NextClientOptions): MonicaNextClient {
-  assertPublicDsn(options.dsn);
+  if (options.dsn?.trim()) assertPublicDsn(options.dsn);
   assertPositiveInteger("maxBreadcrumbs", options.maxBreadcrumbs);
   const maxBreadcrumbs = positiveInteger(options.maxBreadcrumbs) ? options.maxBreadcrumbs : 50;
   const scope: {

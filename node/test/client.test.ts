@@ -7,6 +7,12 @@ const packageMetadata = (await Bun.file(
 ).json()) as { version: string };
 
 describe("createNodeClient", () => {
+  test("sends nothing without a dsn", async () => {
+    const client = createNodeClient({ dsn: undefined, environment: "test", fetch: unexpectedFetch });
+    expect(await client.captureException(new Error("x"))).toBeNull();
+    expect((await client.close()).accepted).toBe(true);
+  });
+
   test("isolates scope across concurrent asynchronous work", async () => {
     const users: unknown[] = [];
     const client = createNodeClient({

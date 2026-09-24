@@ -1,3 +1,4 @@
+import { NOOP_TRANSPORT } from "./transport.js";
 import { SDK_VERSION } from "./version.js";
 import type {
   CaptureHint,
@@ -33,7 +34,8 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
   const queue: MonicaItem[] = [];
   const pendingCaptures = new Set<Promise<unknown>>();
   let discarded = 0;
-  let closed = false;
+  // dsn が無ければ何も送らない。capture は null、flush / close は即座に解決する
+  let closed = options.transport === NOOP_TRANSPORT;
   // 直前に受理されなかった送信の status / issues / error。flush が返して忘れる。
   // 422 の issues は「送っているのに届かない」原因そのものなので、警告を読めない
   // 経路（テスト・バッチ・自前の監視）からも取れるようにしておく。413 も、分割に

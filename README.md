@@ -30,12 +30,13 @@ npm install @ah-monica/next        # Next.js App Router
 DSN は `https://<key>@<ingest-host>` の形式で、環境変数から渡す。
 送信先は DSN の origin に `/v1/envelope` を付けたもので、DSN のパス・クエリ・フラグメントは
 捨てられる。project の識別は鍵で行うので、パスに project id を書く必要はない。
+`dsn` が未指定・空文字・空白だけなら、client は作られるが何も送らない（capture は `null` を返す）。
 
 ```ts
 import { createNodeClient } from "@ah-monica/node";
 
 export const monica = createNodeClient({
-  dsn: process.env.MONICA_DSN!,
+  dsn: process.env.MONICA_DSN,
   environment: process.env.NODE_ENV ?? "development",
   release: process.env.GIT_SHA,
 });
@@ -85,7 +86,7 @@ capture の第 2 引数で渡す。`@ah-monica/node` と `@ah-monica/next` は `
 
 | option | 型 | default | 説明 |
 | --- | --- | --- | --- |
-| `dsn` | `string` | 必須 | `https://<key>@<ingest-host>`。`localhost` と `127.0.0.1` 以外は https のみ |
+| `dsn` | `string \| null` | なし | `https://<key>@<ingest-host>`。`localhost` と `127.0.0.1` 以外は https のみ。未指定・空文字なら何も送らない |
 | `environment` | `string` | 必須 | 1〜128 文字。空文字は不可 |
 | `release` | `string` | なし | item の `release` に載る |
 | `sampleRate` | `number` | `1` | 0〜1。capture ごとに判定する |

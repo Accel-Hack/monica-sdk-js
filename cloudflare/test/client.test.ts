@@ -6,6 +6,18 @@ const packageMetadata = (await Bun.file(
 ).json()) as { version: string };
 
 describe("createCloudflareClient", () => {
+  test("sends nothing when the dsn is empty", async () => {
+    const client = createCloudflareClient({
+      dsn: "",
+      environment: "test",
+      fetch: async () => {
+        throw new Error("fetch should not be called");
+      },
+    });
+    expect(await client.captureException(new Error("x"))).toBeNull();
+    expect((await client.flush()).accepted).toBe(true);
+  });
+
   test("normalizes and flushes an exception through waitUntil", async () => {
     let request: Request | undefined;
     let background: Promise<unknown> | undefined;
