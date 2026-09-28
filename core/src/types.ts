@@ -135,11 +135,12 @@ export interface TransportResult {
 }
 
 /**
- * 稼働確認の判定に使う状態。`lastAcceptedAt` は最後に `202` を受けた時刻（epoch ms）、
+ * 稼働確認の判定に使う状態。`intervalStartedAt` は interval を数え始めた時刻（epoch ms）。
+ * interval が過ぎたと判定したとき（抽選・送信の前）と `202` を受けたときに書く。
  * `intervalMs` / `sampleRate` は `202` の応答 header で MONICA が上書きした値。
  */
 export interface PresenceState {
-  lastAcceptedAt?: number;
+  intervalStartedAt?: number;
   intervalMs?: number;
   sampleRate?: number;
 }

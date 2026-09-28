@@ -218,14 +218,14 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
   }
 
   /**
-   * 稼働確認の状態を持つのはここだけ。受理された時刻を残し、応答 header の値は
+   * 稼働確認の状態を持つのはここだけ。受理された時刻から interval を数え直し、応答 header の値は
    * 検証を通ったものだけ上書きする。header が無い・壊れているときは保存値を残す。
    */
   function recordAccepted(headers: TransportResult["presence"]): void {
     try {
-      const lastAcceptedAt = now().getTime();
-      if (!Number.isFinite(lastAcceptedAt)) return;
-      const state = { ...loadPresence(), lastAcceptedAt };
+      const intervalStartedAt = now().getTime();
+      if (!Number.isFinite(intervalStartedAt)) return;
+      const state = { ...loadPresence(), intervalStartedAt };
       const intervalMs = parsePresenceInterval(headers?.intervalMs);
       const sampleRate = parsePresenceSampleRate(headers?.sampleRate);
       if (intervalMs !== undefined) state.intervalMs = intervalMs;
@@ -247,11 +247,20 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
     } catch {
       return intervalMs;
     }
-    const last = state.lastAcceptedAt;
+    const started = state.intervalStartedAt;
     // 時計が戻った（保存時刻が未来）ときは保存値を信用せず送る
-    if (last !== undefined && at >= last && at - last < intervalMs) return last + intervalMs - at;
+    if (started !== undefined && at >= started && at - started < intervalMs) {
+      return started + intervalMs - at;
+    }
     // 溜まっている error の flush が 202 を受ければ稼働は分かる。受けなかったときに備えて早めに見直す
     if (queue.length > 0 || sending) return PRESENCE.minIntervalMs;
+    // 抽選と送信の前に interval を数え始める。間引きで見送った・送信に失敗した端末も、
+    // 次の interval まで抽選・再送し直さない（端末ごとに interval に 1 回）
+    try {
+      presenceStore.save({ ...state, intervalStartedAt: at });
+    } catch {
+      // 保存できなければ次の判定でまた抽選する
+    }
     if (presence.applySampleRate && random() >= presenceSampleRate(state)) {
       return intervalMs;
     }

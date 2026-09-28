@@ -62,7 +62,9 @@ await client.close(2_000);
 
 稼働確認は `presence` を渡した client だけが送る。`checkPresence("start" | "interval")` は
 直近の interval に `202` が無く queue が空なら `client_report` を 1 通送り、次に判定すべきまでの
-ミリ秒を返す。前回の時刻と header の値は `presence.store`（既定は client ごとのメモリ）に持つ。
+ミリ秒を返す。間引きで見送った・送信に失敗した場合も、次の interval まで判定し直さない。
+interval を数え始めた時刻（`intervalStartedAt`）と header の値は `presence.store`（既定は client
+ごとのメモリ）に持つ。
 
 ## オプション
 

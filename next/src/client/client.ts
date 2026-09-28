@@ -196,7 +196,7 @@ export function createNextClient(options: NextClientOptions): MonicaNextClient {
 const PRESENCE_STORAGE_KEY = "monica.presence";
 
 /**
- * 前回 202 を受けた時刻と、header で上書きされた interval / rate を端末に持つ。
+ * interval を数え始めた時刻と、header で上書きされた interval / rate を端末に持つ。
  * localStorage が使えなければ sessionStorage、どちらも無ければメモリ。
  */
 function browserPresenceStore(): PresenceStore {

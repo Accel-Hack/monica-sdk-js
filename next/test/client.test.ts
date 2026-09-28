@@ -219,7 +219,7 @@ describe("稼働確認（client_report）", () => {
     const storage = fakeStorage();
     inBrowser(storage);
     expect(await pageLoad()).toBe(1);
-    expect(JSON.parse(storage.getItem("monica.presence")!)).toEqual({ lastAcceptedAt: T0 });
+    expect(JSON.parse(storage.getItem("monica.presence")!)).toEqual({ intervalStartedAt: T0 });
     jest.setSystemTime(T0 + DAY - 1);
     expect(await pageLoad()).toBe(0);
     jest.setSystemTime(T0 + DAY);
@@ -236,13 +236,17 @@ describe("稼働確認（client_report）", () => {
       }),
     ).toBe(1);
     expect(JSON.parse(storage.getItem("monica.presence")!)).toEqual({
-      lastAcceptedAt: T0,
+      intervalStartedAt: T0,
       intervalMs: 3_600_000,
       sampleRate: 0.25,
     });
     jest.setSystemTime(T0 + 3_600_000);
     Math.random = () => 0.25;
     expect(await pageLoad()).toBe(0);
+    // 間引きで見送ったら、同じ interval 内の読み込みでは抽選し直さない
+    Math.random = () => 0;
+    expect(await pageLoad()).toBe(0);
+    jest.setSystemTime(T0 + 2 * 3_600_000);
     Math.random = () => 0.24;
     // header 無しの応答では保存値を残す
     expect(await pageLoad()).toBe(1);

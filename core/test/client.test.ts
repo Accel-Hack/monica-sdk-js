@@ -352,18 +352,23 @@ describe("checkPresence", () => {
       environment: "production",
       presence: { platform: "node" },
     });
-    const first = client.checkPresence("start");
+    // fatal は即座に送られ、応答を待っている間は sending が立つ
+    await client.capture({ type: "error", platform: "node", level: "fatal" });
     expect(await client.checkPresence("start")).toBe(60_000);
     release?.();
-    await first;
-    expect(envelopes).toHaveLength(1);
+    await client.flush();
+    expect(envelopes.map((envelope) => envelope.items[0]?.type)).toEqual(["error"]);
   });
 
-  test("受理されなかった送信は数えず、次の interval で送り直す", async () => {
+  test("失敗した heartbeat は interval 内に再送せず、次の interval で送り直す", async () => {
     const h = presenceHarness();
     h.respondWith(() => ({ accepted: false, status: 503 }));
     expect(await h.client.checkPresence("start")).toBe(DAY);
     h.respondWith(() => ({ accepted: true, status: 202 }));
+    h.advance(DAY - 1);
+    expect(await h.client.checkPresence("interval")).toBe(1);
+    expect(h.reports()).toHaveLength(1);
+    h.advance(1);
     expect(await h.client.checkPresence("interval")).toBe(DAY);
     expect(h.reports()).toHaveLength(2);
     // 捨てた 1 件は次の envelope の discarded に載る
@@ -397,18 +402,51 @@ describe("checkPresence", () => {
   });
 
   test("配布物は保存した sample rate で間引き、サーバは間引かない", async () => {
-    const store = memoryStore({ sampleRate: 0.5 });
-    const distributed = presenceHarness({ applySampleRate: true, random: () => 0.5, store });
+    const distributed = presenceHarness({
+      applySampleRate: true,
+      random: () => 0.5,
+      store: memoryStore({ sampleRate: 0.5 }),
+    });
     await distributed.client.checkPresence("start");
     expect(distributed.envelopes).toHaveLength(0);
 
-    const sampledIn = presenceHarness({ applySampleRate: true, random: () => 0.49, store });
+    const sampledIn = presenceHarness({
+      applySampleRate: true,
+      random: () => 0.49,
+      store: memoryStore({ sampleRate: 0.5 }),
+    });
     await sampledIn.client.checkPresence("start");
     expect(sampledIn.envelopes).toHaveLength(1);
 
     const server = presenceHarness({ random: () => 0.99, store: memoryStore({ sampleRate: 0.5 }) });
     await server.client.checkPresence("start");
     expect(server.envelopes).toHaveLength(1);
+  });
+
+  test("間引きで見送ったあと、同じ interval 内は抽選し直さない", async () => {
+    const store = memoryStore({ sampleRate: 0.5 });
+    let draws = 0;
+    let next = 0.5;
+    const random = () => {
+      draws += 1;
+      return next;
+    };
+    const first = presenceHarness({ applySampleRate: true, random, store });
+    expect(await first.client.checkPresence("start")).toBe(DAY);
+    expect(draws).toBe(1);
+
+    // 作り直した client（次のページ読み込み）でも、同じ interval 内は抽選しない
+    next = 0;
+    const second = presenceHarness({ applySampleRate: true, random, store });
+    second.advance(DAY - 1);
+    expect(await second.client.checkPresence("start")).toBe(1);
+    expect(draws).toBe(1);
+    expect(second.envelopes).toHaveLength(0);
+
+    second.advance(1);
+    await second.client.checkPresence("interval");
+    expect(draws).toBe(2);
+    expect(second.envelopes).toHaveLength(1);
   });
 
   test("header の sample rate を保存し、範囲外や指数表記は無視する", async () => {
