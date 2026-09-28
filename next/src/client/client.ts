@@ -22,7 +22,7 @@ interface BrowserEventTarget {
 }
 
 export function createNextClient(options: NextClientOptions): MonicaNextClient {
-  if (options.dsn?.trim()) assertPublicDsn(options.dsn);
+  const publicKey = options.dsn?.trim() ? parsePublicKey(options.dsn) : undefined;
   assertPositiveInteger("maxBreadcrumbs", options.maxBreadcrumbs);
   const maxBreadcrumbs = positiveInteger(options.maxBreadcrumbs) ? options.maxBreadcrumbs : 50;
   const scope: {
@@ -47,9 +47,15 @@ export function createNextClient(options: NextClientOptions): MonicaNextClient {
     flushIntervalMs: options.flushIntervalMs,
     beforeSend: options.beforeSend,
     sdk: { name: "@ah-monica/next", version: SDK_VERSION },
-    // SSR 中に作られた client は storage に触らず、稼働確認も送らない
-    ...(inBrowser
-      ? { presence: { platform: "javascript", store: browserPresenceStore(), applySampleRate: true } }
+    // SSR 中に作られた client と dsn の無い client は storage に触らず、稼働確認も送らない
+    ...(inBrowser && publicKey
+      ? {
+          presence: {
+            platform: "javascript",
+            store: browserPresenceStore(`monica.presence.${publicKey}`),
+            applySampleRate: true,
+          },
+        }
       : {}),
   });
   // ページ読み込み時の 1 回だけ判定する
@@ -193,34 +199,37 @@ export function createNextClient(options: NextClientOptions): MonicaNextClient {
   };
 }
 
-const PRESENCE_STORAGE_KEY = "monica.presence";
-
 /**
  * interval を数え始めた時刻と、header で上書きされた interval / rate を端末に持つ。
  * localStorage が使えなければ sessionStorage、どちらも無ければメモリ。
+ * key は project（API key）ごとに分ける。同じ origin で別 project の client を併用しても
+ * 互いの start を止めない。
  */
-function browserPresenceStore(): PresenceStore {
-  const storage = usableStorage("localStorage") ?? usableStorage("sessionStorage");
+function browserPresenceStore(key: string): PresenceStore {
+  const storage = usableStorage("localStorage", key) ?? usableStorage("sessionStorage", key);
   let memory: PresenceState | undefined;
   return {
     load() {
       if (!storage) return memory;
-      const raw = storage.getItem(PRESENCE_STORAGE_KEY);
+      const raw = storage.getItem(key);
       return raw ? (JSON.parse(raw) as PresenceState) : undefined;
     },
     save(state) {
-      if (storage) storage.setItem(PRESENCE_STORAGE_KEY, JSON.stringify(state));
+      if (storage) storage.setItem(key, JSON.stringify(state));
       else memory = state;
     },
   };
 }
 
-function usableStorage(name: "localStorage" | "sessionStorage"): Storage | undefined {
+function usableStorage(
+  name: "localStorage" | "sessionStorage",
+  key: string,
+): Storage | undefined {
   try {
     // private mode や cookie 無効では、読むだけで throw するか setItem が throw する
     const storage = (globalThis as Partial<Record<typeof name, Storage>>)[name];
     if (!storage) return undefined;
-    storage.setItem(PRESENCE_STORAGE_KEY, storage.getItem(PRESENCE_STORAGE_KEY) ?? "");
+    storage.setItem(key, storage.getItem(key) ?? "");
     return storage;
   } catch {
     return undefined;
@@ -242,7 +251,8 @@ function isUncaughtErrorEvent(event: Event, target: unknown): boolean {
   return eventTarget === undefined || eventTarget === null || eventTarget === target;
 }
 
-function assertPublicDsn(dsn: string): void {
+/** dsn の API key を返す。public key（mpk_）でなければ throw する */
+function parsePublicKey(dsn: string): string {
   let key: string;
   try {
     key = decodeURIComponent(new URL(dsn).username);
@@ -252,6 +262,7 @@ function assertPublicDsn(dsn: string): void {
   if (!key.startsWith("mpk_")) {
     throw new TypeError("client dsn must contain a public mpk_ key; never expose an msk_ key");
   }
+  return key;
 }
 
 function cloneRequest(request: MonicaRequest): MonicaRequest {

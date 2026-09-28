@@ -177,6 +177,8 @@ describe("稼働確認（client_report）", () => {
     }
   });
 
+  const STORAGE_KEY = "monica.presence.mpk_test";
+
   function fakeStorage(): Storage {
     const values = new Map<string, string>();
     return {
@@ -219,7 +221,7 @@ describe("稼働確認（client_report）", () => {
     const storage = fakeStorage();
     inBrowser(storage);
     expect(await pageLoad()).toBe(1);
-    expect(JSON.parse(storage.getItem("monica.presence")!)).toEqual({ intervalStartedAt: T0 });
+    expect(JSON.parse(storage.getItem(STORAGE_KEY)!)).toEqual({ intervalStartedAt: T0 });
     jest.setSystemTime(T0 + DAY - 1);
     expect(await pageLoad()).toBe(0);
     jest.setSystemTime(T0 + DAY);
@@ -235,7 +237,7 @@ describe("稼働確認（client_report）", () => {
         "X-Monica-Presence-Sample-Rate": "0.25",
       }),
     ).toBe(1);
-    expect(JSON.parse(storage.getItem("monica.presence")!)).toEqual({
+    expect(JSON.parse(storage.getItem(STORAGE_KEY)!)).toEqual({
       intervalStartedAt: T0,
       intervalMs: 3_600_000,
       sampleRate: 0.25,
@@ -250,10 +252,30 @@ describe("稼働確認（client_report）", () => {
     Math.random = () => 0.24;
     // header 無しの応答では保存値を残す
     expect(await pageLoad()).toBe(1);
-    expect(JSON.parse(storage.getItem("monica.presence")!)).toMatchObject({
+    expect(JSON.parse(storage.getItem(STORAGE_KEY)!)).toMatchObject({
       intervalMs: 3_600_000,
       sampleRate: 0.25,
     });
+  });
+
+  test("storage のキーは project（API key）ごとに分かれ、別 project の start を止めない", async () => {
+    const storage = fakeStorage();
+    inBrowser(storage);
+    expect(await pageLoad()).toBe(1);
+    let otherReports = 0;
+    const other = createNextClient({
+      dsn: "https://mpk_other@ingest.example.test/project-other",
+      environment: "production",
+      fetch: async () => {
+        otherReports += 1;
+        return new Response(null, { status: 202 });
+      },
+    });
+    await other.flush();
+    await other.close();
+    expect(otherReports).toBe(1);
+    expect(storage.getItem("monica.presence.mpk_other")).not.toBeNull();
+    expect(storage.getItem(STORAGE_KEY)).not.toBeNull();
   });
 
   test("storage が無ければメモリに持ち、読み込みごとに送る", async () => {

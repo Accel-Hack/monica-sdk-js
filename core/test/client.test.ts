@@ -478,6 +478,18 @@ describe("checkPresence", () => {
     expect(second.envelopes).toHaveLength(0);
   });
 
+  test("now が壊れた Date を返しても reject せず、送らない", async () => {
+    const envelopes: MonicaEnvelope[] = [];
+    const client = createCoreClient({
+      transport: { send: async (envelope) => (envelopes.push(envelope), { accepted: true }) },
+      environment: "production",
+      now: () => new Date(Number.NaN),
+      presence: { platform: "node" },
+    });
+    expect(await client.checkPresence("start")).toBe(DAY);
+    expect(envelopes).toHaveLength(0);
+  });
+
   test("store が throw しても送信は続く", async () => {
     const h = presenceHarness({
       store: {

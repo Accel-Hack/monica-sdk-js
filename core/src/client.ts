@@ -247,6 +247,8 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
     } catch {
       return intervalMs;
     }
+    // new Date(NaN) だと toISOString() が throw し、void で呼ぶ adapter で unhandled rejection になる
+    if (!Number.isFinite(at)) return intervalMs;
     const started = state.intervalStartedAt;
     // 時計が戻った（保存時刻が未来）ときは保存値を信用せず送る
     if (started !== undefined && at >= started && at - started < intervalMs) {

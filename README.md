@@ -138,7 +138,7 @@ client を作ったときと、1 日 `202` を受けていないときに、稼�
 - `@ah-monica/cloudflare`: isolate ごとに、最初の `flush()` / capture で 1 通だけ。
   request の入口で `ctx.waitUntil(monica.flush())` を呼ぶ（[`cloudflare/README.md`](cloudflare/README.md)）
 - `@ah-monica/next/client`: ページ読み込み時に 1 通。前回の時刻を `localStorage`
-  （無ければ `sessionStorage`）の `monica.presence` に持ち、1 日以内なら送らない
+  （無ければ `sessionStorage`）の `monica.presence.<API key>` に持ち、1 日以内なら送らない
 
 ## 送信結果と診断
 
