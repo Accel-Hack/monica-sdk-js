@@ -250,8 +250,8 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
     const last = state.lastAcceptedAt;
     // 時計が戻った（保存時刻が未来）ときは保存値を信用せず送る
     if (last !== undefined && at >= last && at - last < intervalMs) return last + intervalMs - at;
-    // 溜まっている error の flush が 202 を受ければ稼働は分かる
-    if (queue.length > 0 || sending) return intervalMs;
+    // 溜まっている error の flush が 202 を受ければ稼働は分かる。受けなかったときに備えて早めに見直す
+    if (queue.length > 0 || sending) return PRESENCE.minIntervalMs;
     if (presence.applySampleRate && random() >= presenceSampleRate(state)) {
       return intervalMs;
     }

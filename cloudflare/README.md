@@ -44,7 +44,7 @@ function createClient(env: Env) {
 ブラウザ側の SDK にも同じ値を渡すと、Worker とブラウザの event が同じ release に揃う。
 
 DSN を Secrets Store に置く場合、binding の値は `get()` で非同期に読むので、client は
-`catch` の中で作る（[制約](#制約) のとおり request ごとに作ってよい）。`get()` は secret が
+request の入口で作る（[制約](#制約) のとおり request ごとに作ってよい）。`get()` は secret が
 無いと例外を投げるので、`undefined` に落として何も送らない client にする。
 
 ```ts
@@ -56,14 +56,15 @@ interface Env {
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const monica = createCloudflareClient({
+      dsn: await env.MONICA_DSN.get().catch(() => undefined),
+      environment: env.MONICA_ENVIRONMENT,
+      release: env.MONICA_RELEASE,
+    });
+    ctx.waitUntil(monica.flush());
     try {
       return await handleRequest(request, env);
     } catch (error) {
-      const monica = createCloudflareClient({
-        dsn: await env.MONICA_DSN.get().catch(() => undefined),
-        environment: env.MONICA_ENVIRONMENT,
-        release: env.MONICA_RELEASE,
-      });
       monica.captureExceptionInBackground(ctx, error);
       return new Response("Internal Server Error", { status: 500 });
     }
@@ -73,6 +74,9 @@ export default {
 
 ## 使い方
 
+request の入口で client を作り、`ctx.waitUntil(monica.flush())` を呼ぶ。isolate で最初の
+呼び出しが稼働確認の `client_report` を 1 通送り、`waitUntil` がその送信を待つ。
+
 `captureException()` は capture と flush の両方を終えてから解決する Promise を返す。
 handler の応答を待たせたくない場合は `captureExceptionInBackground(ctx, ...)` で
 `ExecutionContext.waitUntil()` に載せる。
@@ -80,10 +84,12 @@ handler の応答を待たせたくない場合は `captureExceptionInBackground
 ```ts
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const monica = createClient(env);
+    ctx.waitUntil(monica.flush());
     try {
       return await handleRequest(request, env);
     } catch (error) {
-      createClient(env).captureExceptionInBackground(ctx, error, {
+      monica.captureExceptionInBackground(ctx, error, {
         tags: { operation: "handle-request" },
         // URL の path にも個人情報が入り得るので、安全と判断した値だけを渡す。
         request: { method: request.method, url: new URL(request.url).origin },
@@ -137,9 +143,8 @@ Worker の外側で起きた未捕捉例外まで集めたい場合は Tail Work
   送信は途中で打ち切られる。
 - client は request ごとに作ってよい。`401` で止まるのはその client だけなので、
   鍵が失効しても次の request で再び 1 回 POST する。
-- client は request の中で作る（global scope では fetch できない）。isolate で最初に作った
-  client が稼働確認の `client_report` を 1 通送る。`captureException` / `flush()` を
-  `waitUntil()` に載せればそれも待つ。
+- 稼働確認を送るには、request の入口で `ctx.waitUntil(monica.flush())` を呼ぶ。
+  送るのは isolate ごとに 1 通で、client を作っただけでは送らない。
 
 ## ライセンス
 

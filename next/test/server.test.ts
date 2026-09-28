@@ -1,4 +1,4 @@
-import { describe, expect, jest, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { createNextServerClient } from "../src/server/client.js";
 
 describe("createNextServerClient", () => {
@@ -112,39 +112,25 @@ async function readEnvelope(request: Request | undefined): Promise<CapturedEnvel
 }
 
 describe("稼働確認（client_report）", () => {
-  test("serverless として start を 1 回だけ送り、タイマーを持たない", async () => {
-    jest.useFakeTimers();
+  test("next build の worker からは start を送らない", async () => {
+    const phase = process.env.NEXT_PHASE;
+    process.env.NEXT_PHASE = "phase-production-build";
     try {
-      jest.setSystemTime(Date.parse("2026-08-30T00:00:00.000Z"));
-      const items: Array<Record<string, unknown>> = [];
+      let requests = 0;
       const client = createNextServerClient({
         dsn: "https://msk_test@ingest.example.test/project-sample",
         environment: "production",
-        fetch: async (input, init) => {
-          const envelope = (await readEnvelope(new Request(input, init))) as unknown as {
-            items: Array<Record<string, unknown>>;
-          };
-          items.push(...envelope.items);
+        fetch: async () => {
+          requests += 1;
           return new Response(null, { status: 202 });
         },
       });
       await client.flush();
-      expect(items).toEqual([
-        {
-          type: "client_report",
-          timestamp: "2026-08-30T00:00:00.000Z",
-          platform: "node",
-          environment: "production",
-          trigger: "start",
-        },
-      ]);
-      jest.setSystemTime(Date.parse("2026-09-01T00:00:00.000Z"));
-      jest.advanceTimersByTime(2 * 86_400_000);
-      await client.flush();
-      expect(items).toHaveLength(1);
+      expect(requests).toBe(0);
       await client.close();
     } finally {
-      jest.useRealTimers();
+      if (phase === undefined) delete process.env.NEXT_PHASE;
+      else process.env.NEXT_PHASE = phase;
     }
   });
 });

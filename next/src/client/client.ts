@@ -29,6 +29,7 @@ export function createNextClient(options: NextClientOptions): MonicaNextClient {
     user?: MonicaUser;
     breadcrumbs: MonicaBreadcrumb[];
   } = { breadcrumbs: [] };
+  const inBrowser = typeof window !== "undefined";
   const core = createCoreClient({
     transport: createFetchTransport({
       dsn: options.dsn,
@@ -46,10 +47,13 @@ export function createNextClient(options: NextClientOptions): MonicaNextClient {
     flushIntervalMs: options.flushIntervalMs,
     beforeSend: options.beforeSend,
     sdk: { name: "@ah-monica/next", version: SDK_VERSION },
-    presence: { platform: "javascript", store: browserPresenceStore(), applySampleRate: true },
+    // SSR 中に作られた client は storage に触らず、稼働確認も送らない
+    ...(inBrowser
+      ? { presence: { platform: "javascript", store: browserPresenceStore(), applySampleRate: true } }
+      : {}),
   });
-  // SSR 中に作られた client は送らない。ページ読み込み時の 1 回だけ判定する
-  if (typeof window !== "undefined") void core.checkPresence("start");
+  // ページ読み込み時の 1 回だけ判定する
+  void core.checkPresence("start");
   let removeGlobalHandlers: (() => void) | undefined;
 
   function contextValues(context: NextClientCaptureContext) {

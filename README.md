@@ -133,8 +133,10 @@ client を作ったときと、1 日 `202` を受けていないときに、稼�
 （`platform` / `environment` / `release` と送った契機だけ）を単独の envelope で送る。
 設定項目は無く、間隔と間引きは MONICA 側の project 設定で変わる。
 
-- `@ah-monica/node`: 作成時に 1 通、以後は 1 日 `202` の無い日に 1 通（`unref` したタイマー。`close()` で止まる）
-- `@ah-monica/cloudflare` / `@ah-monica/next/server`: isolate（process）ごとに作成時の 1 通だけ
+- `@ah-monica/node` / `@ah-monica/next/server`: 作成時に 1 通、以後は 1 日 `202` の無い日に 1 通
+  （`unref` したタイマー。`close()` で止まる）。`next build` の間は送らない
+- `@ah-monica/cloudflare`: isolate ごとに、最初の `flush()` / capture で 1 通だけ。
+  request の入口で `ctx.waitUntil(monica.flush())` を呼ぶ（[`cloudflare/README.md`](cloudflare/README.md)）
 - `@ah-monica/next/client`: ページ読み込み時に 1 通。前回の時刻を `localStorage`
   （無ければ `sessionStorage`）の `monica.presence` に持ち、1 日以内なら送らない
 

@@ -7,6 +7,10 @@ const packageMetadata = (await Bun.file(
 ).json()) as { version: string };
 
 describe("createNodeClient", () => {
+  afterEach(() => {
+    expect(unexpectedEnvelopes.splice(0)).toEqual([]);
+  });
+
   test("sends nothing without a dsn", async () => {
     const client = createNodeClient({ dsn: undefined, environment: "test", fetch: unexpectedFetch });
     expect(await client.captureException(new Error("x"))).toBeNull();
@@ -174,8 +178,15 @@ describe("createNodeClient", () => {
   });
 });
 
-async function unexpectedFetch(): Promise<Response> {
-  throw new Error("fetch should not be called");
+/** 生成時の client_report だけは受理する。それ以外の envelope が来たら記録して後で落とす */
+const unexpectedEnvelopes: string[][] = [];
+async function unexpectedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const request = new Request(input, init);
+  const stream = request.body!.pipeThrough(new DecompressionStream("gzip"));
+  const envelope = (await new Response(stream).json()) as { items: Array<{ type: string }> };
+  const types = envelope.items.map((item) => item.type);
+  if (types.some((type) => type !== "client_report")) unexpectedEnvelopes.push(types);
+  return new Response(null, { status: 202 });
 }
 
 describe("稼働確認（client_report）", () => {
@@ -271,26 +282,17 @@ describe("稼働確認（client_report）", () => {
     expect(reports()).toHaveLength(1);
   });
 
-  test("serverless は start だけ送り、タイマーを持たない", async () => {
-    jest.useFakeTimers();
-    jest.setSystemTime(T0);
-    let requests = 0;
-    const client = createNodeClient(
-      {
-        dsn: "https://secret@ingest.example.test/1",
-        environment: "production",
-        fetch: async () => {
-          requests += 1;
-          return new Response(null, { status: 202 });
-        },
-      },
-      "serverless",
-    );
-    await client.flush();
-    expect(requests).toBe(1);
-    jest.setSystemTime(T0 + DAY * 2);
-    jest.advanceTimersByTime(DAY * 2);
-    await client.flush();
-    expect(requests).toBe(1);
+  test("next build の worker からは start を送らない", async () => {
+    const phase = process.env.NEXT_PHASE;
+    process.env.NEXT_PHASE = "phase-production-build";
+    try {
+      const { client, reports } = recordingClient();
+      await client.flush();
+      expect(reports()).toHaveLength(0);
+      await client.close();
+    } finally {
+      if (phase === undefined) delete process.env.NEXT_PHASE;
+      else process.env.NEXT_PHASE = phase;
+    }
   });
 });

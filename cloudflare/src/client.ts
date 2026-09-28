@@ -6,7 +6,6 @@ import {
   type MonicaExceptionValue,
   type MonicaFrame,
   type MonicaRequest,
-  type PresenceState,
 } from "@ah-monica/core";
 import { SDK_VERSION } from "./version.js";
 import type {
@@ -20,9 +19,10 @@ const DEFAULT_FLUSH_TIMEOUT_MS = 2_000;
 const DEFAULT_MAX_CAUSE_DEPTH = 10;
 const DEFAULT_MAX_STACK_FRAMES = 200;
 
-// client は request ごとに作られるので、稼働確認の状態は isolate に 1 つ持つ。
-// これで start は isolate ごとに 1 回になる（dsn と environment が違えば別に数える）
-const isolatePresence = new Map<string, PresenceState>();
+// client は request ごとに作られるので、start を送ったかは isolate に 1 つ持つ。
+// 判定の前に印を付けるので、並行する request でも isolate ごとに 1 回になる
+// （dsn と environment が違えば別に数える）
+const startedInIsolate = new Set<string>();
 
 export function createCloudflareClient(
   options: CloudflareClientOptions,
@@ -48,25 +48,33 @@ export function createCloudflareClient(
     sampleRate: options.sampleRate,
     beforeSend: options.beforeSend,
     sdk: { name: "@ah-monica/cloudflare", version: SDK_VERSION },
-    presence: {
-      platform: "javascript",
-      store: {
-        load: () => isolatePresence.get(presenceKey),
-        save: (state) => void isolatePresence.set(presenceKey, state),
-      },
-    },
+    presence: { platform: "javascript" },
   });
-  // Workers にはタイマーが無い。送信中の分は flush() が待つので、captureException を
-  // waitUntil に載せればこの送信も含めて handler の後まで生きる
-  void core.checkPresence("start");
+
+  /**
+   * Workers にはタイマーが無く、global scope では fetch できない。生成時ではなく最初の
+   * flush / capture の呼び出し（request の中）で start を送る。送信中の分は flush() が
+   * 待つので、それを waitUntil に載せれば handler の後まで生きる。
+   */
+  function startOnce(): void {
+    if (startedInIsolate.has(presenceKey)) return;
+    startedInIsolate.add(presenceKey);
+    void core.checkPresence("start");
+  }
+
+  function flush(timeoutMs?: number) {
+    startOnce();
+    return core.flush(timeoutMs);
+  }
 
   async function captureAndFlush(
     input: CaptureItemInput,
     hint?: CaptureHint,
   ): Promise<string | null> {
     try {
+      startOnce();
       const eventId = await core.capture(input, hint);
-      if (eventId === null) return null;
+      // 捨てた event でも、送信中の start は待つ
       await core.flush(flushTimeoutMs);
       return eventId;
     } catch {
@@ -127,7 +135,7 @@ export function createCloudflareClient(
     captureException,
     captureMessage,
     captureExceptionInBackground,
-    flush: core.flush,
+    flush,
     close: core.close,
   };
 }

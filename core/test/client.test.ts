@@ -330,9 +330,33 @@ describe("checkPresence", () => {
   test("queue に error が溜まっている間は送らない", async () => {
     const h = presenceHarness();
     await h.client.capture({ type: "error", platform: "node", level: "error" });
-    await h.client.checkPresence("start");
+    expect(await h.client.checkPresence("start")).toBe(60_000);
     expect(h.envelopes).toHaveLength(0);
     await h.client.close();
+  });
+
+  test("送信中の envelope があれば送らず、下限の間隔で見直す", async () => {
+    const envelopes: MonicaEnvelope[] = [];
+    let release: (() => void) | undefined;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const client = createCoreClient({
+      transport: {
+        async send(envelope) {
+          envelopes.push(envelope);
+          await blocked;
+          return { accepted: true, status: 202 };
+        },
+      },
+      environment: "production",
+      presence: { platform: "node" },
+    });
+    const first = client.checkPresence("start");
+    expect(await client.checkPresence("start")).toBe(60_000);
+    release?.();
+    await first;
+    expect(envelopes).toHaveLength(1);
   });
 
   test("受理されなかった送信は数えず、次の interval で送り直す", async () => {

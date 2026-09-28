@@ -10,8 +10,7 @@ import type {
 export function createNextServerClient(
   options: NextServerClientOptions,
 ): MonicaNextServerClient {
-  // Next.js の server は serverless 扱い。process（isolate）ごとに start を 1 回だけ送る
-  const node = createNodeClient(options, "serverless");
+  const node = createNodeClient(options);
 
   async function captureRequestError(
     error: unknown,
