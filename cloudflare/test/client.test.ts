@@ -193,3 +193,68 @@ async function readEnvelope(request: Request | undefined): Promise<CapturedEnvel
   const stream = request.body.pipeThrough(new DecompressionStream("gzip"));
   return new Response(stream).json() as Promise<CapturedEnvelope>;
 }
+
+describe("稼働確認（client_report）", () => {
+  function recordingFetch(items: Array<Record<string, unknown>>, status = 202) {
+    return async (input: RequestInfo | URL, init?: RequestInit) => {
+      const envelope = (await readEnvelope(new Request(input, init))) as unknown as {
+        items: Array<Record<string, unknown>>;
+      };
+      expect(envelope.items).toHaveLength(1);
+      items.push(envelope.items[0]!);
+      return new Response(null, { status });
+    };
+  }
+
+  test("isolate ごとに start を 1 回だけ送り、waitUntil に載せた capture がそれも待つ", async () => {
+    const items: Array<Record<string, unknown>> = [];
+    const options = {
+      dsn: "https://msk_test@ingest.example.test/project-presence",
+      environment: "production",
+      release: "worker-version-id",
+      fetch: recordingFetch(items),
+    };
+    let background: Promise<unknown> | undefined;
+    createCloudflareClient(options).captureExceptionInBackground(
+      { waitUntil: (promise) => void (background = promise) },
+      new Error("first"),
+    );
+    await background;
+    expect(items.map((item) => item.type)).toEqual(["client_report", "error"]);
+    expect(items[0]).toEqual({
+      type: "client_report",
+      timestamp: expect.any(String),
+      platform: "javascript",
+      environment: "production",
+      trigger: "start",
+      release: "worker-version-id",
+    });
+
+    // 同じ isolate で request ごとに作り直しても start は送らない
+    await createCloudflareClient(options).captureMessage("second");
+    expect(items.map((item) => item.type)).toEqual(["client_report", "error", "error"]);
+
+    // environment が違えば別に数える
+    const other = createCloudflareClient({ ...options, environment: "staging" });
+    await other.flush();
+    expect(items.map((item) => item.type)).toEqual([
+      "client_report",
+      "error",
+      "error",
+      "client_report",
+    ]);
+  });
+
+  test("start が受理されなければ次の client で送り直す", async () => {
+    const items: Array<Record<string, unknown>> = [];
+    const options = {
+      dsn: "https://msk_test@ingest.example.test/project-presence-retry",
+      environment: "production",
+      onDiagnostic: null,
+    };
+    await createCloudflareClient({ ...options, fetch: recordingFetch(items, 503) }).flush();
+    await createCloudflareClient({ ...options, fetch: recordingFetch(items) }).flush();
+    await createCloudflareClient({ ...options, fetch: recordingFetch(items) }).flush();
+    expect(items.map((item) => item.trigger)).toEqual(["start", "start"]);
+  });
+});

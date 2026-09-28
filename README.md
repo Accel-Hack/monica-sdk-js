@@ -127,6 +127,17 @@ URL と headers は収集しない。
 どの値が個人情報かは SDK では判定せず、自動除去もしない。送る値の選択と除去は
 アプリケーションの責任で、`beforeSend` がその最後の境界になる。
 
+## 稼働確認
+
+client を作ったときと、1 日 `202` を受けていないときに、稼働確認の `client_report`
+（`platform` / `environment` / `release` と送った契機だけ）を単独の envelope で送る。
+設定項目は無く、間隔と間引きは MONICA 側の project 設定で変わる。
+
+- `@ah-monica/node`: 作成時に 1 通、以後は 1 日 `202` の無い日に 1 通（`unref` したタイマー。`close()` で止まる）
+- `@ah-monica/cloudflare` / `@ah-monica/next/server`: isolate（process）ごとに作成時の 1 通だけ
+- `@ah-monica/next/client`: ページ読み込み時に 1 通。前回の時刻を `localStorage`
+  （無ければ `sessionStorage`）の `monica.presence` に持ち、1 日以内なら送らない
+
 ## 送信結果と診断
 
 ingest が envelope を拒否すると、既定で `console.warn` に 1 行出る。出るのは `422`
@@ -144,7 +155,7 @@ ingest が envelope を拒否すると、既定で `console.warn` に 1 行出�
   クライアントに配る配信物には public key（`mpk_...`）だけを置く。
 - envelope 1 件の上限は gzip 後 1 MiB、item 100 件、stacktrace 200 frame。
   SDK は送信前に JSON を 1,000,000 byte 未満に抑え、単体で超える item は破棄する。
-- 送信できる item は `type: "error"` のみ。
+- アプリケーションから送れる item は `type: "error"` のみ。
 - ESM のみ。CommonJS の `require()` では読み込めない。
 - Next.js の Edge runtime は対象外。
 

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 import { createNextServerClient } from "../src/server/client.js";
 
 describe("createNextServerClient", () => {
@@ -110,3 +110,41 @@ async function readEnvelope(request: Request | undefined): Promise<CapturedEnvel
   const stream = request.body.pipeThrough(new DecompressionStream("gzip"));
   return new Response(stream).json() as Promise<CapturedEnvelope>;
 }
+
+describe("稼働確認（client_report）", () => {
+  test("serverless として start を 1 回だけ送り、タイマーを持たない", async () => {
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(Date.parse("2026-08-30T00:00:00.000Z"));
+      const items: Array<Record<string, unknown>> = [];
+      const client = createNextServerClient({
+        dsn: "https://msk_test@ingest.example.test/project-sample",
+        environment: "production",
+        fetch: async (input, init) => {
+          const envelope = (await readEnvelope(new Request(input, init))) as unknown as {
+            items: Array<Record<string, unknown>>;
+          };
+          items.push(...envelope.items);
+          return new Response(null, { status: 202 });
+        },
+      });
+      await client.flush();
+      expect(items).toEqual([
+        {
+          type: "client_report",
+          timestamp: "2026-08-30T00:00:00.000Z",
+          platform: "node",
+          environment: "production",
+          trigger: "start",
+        },
+      ]);
+      jest.setSystemTime(Date.parse("2026-09-01T00:00:00.000Z"));
+      jest.advanceTimersByTime(2 * 86_400_000);
+      await client.flush();
+      expect(items).toHaveLength(1);
+      await client.close();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});

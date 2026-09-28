@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, jest, test } from "bun:test";
 import process from "node:process";
 import { createNodeClient, type MonicaItem } from "../src/index.js";
 
@@ -177,3 +177,120 @@ describe("createNodeClient", () => {
 async function unexpectedFetch(): Promise<Response> {
   throw new Error("fetch should not be called");
 }
+
+describe("稼働確認（client_report）", () => {
+  const DAY = 86_400_000;
+  const T0 = Date.parse("2026-08-30T00:00:00.000Z");
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  /** fake clock の上で、受け取った envelope の item を記録する client */
+  function recordingClient(headers: Record<string, string> = {}) {
+    jest.useFakeTimers();
+    jest.setSystemTime(T0);
+    const items: Array<Record<string, unknown>> = [];
+    const client = createNodeClient({
+      dsn: "https://secret@ingest.example.test/1",
+      environment: "production",
+      release: "1.2.3",
+      batchSize: 1,
+      maxRetries: 0,
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        const stream = request.body!.pipeThrough(new DecompressionStream("gzip"));
+        const envelope = (await new Response(stream).json()) as {
+          items: Array<Record<string, unknown>>;
+        };
+        expect(envelope.items).toHaveLength(1);
+        items.push(envelope.items[0]!);
+        return new Response(null, { status: 202, headers });
+      },
+    });
+    const reports = () => items.filter((item) => item.type === "client_report");
+    /** 時計とタイマーを進め、発火した送信が終わるまで待つ */
+    async function advance(ms: number) {
+      jest.setSystemTime(Date.now() + ms);
+      jest.advanceTimersByTime(ms);
+      await client.flush();
+    }
+    return { client, items, reports, advance };
+  }
+
+  test("init で start を送り、202 から 1 日沈黙すると interval を 1 通送る", async () => {
+    const { client, reports, advance } = recordingClient();
+    await client.flush();
+    expect(reports()).toEqual([
+      {
+        type: "client_report",
+        timestamp: "2026-08-30T00:00:00.000Z",
+        platform: "node",
+        environment: "production",
+        trigger: "start",
+        release: "1.2.3",
+      },
+    ]);
+    await advance(DAY - 1);
+    expect(reports()).toHaveLength(1);
+    await advance(1);
+    expect(reports().map((item) => item.trigger)).toEqual(["start", "interval"]);
+    await advance(DAY - 1);
+    expect(reports()).toHaveLength(2);
+    await client.close();
+  });
+
+  test("error envelope の 202 で期限が伸び、残り時間で張り直す", async () => {
+    const { client, items, reports, advance } = recordingClient();
+    await client.flush();
+    await advance(DAY - 1_000);
+    await client.captureMessage("still alive");
+    await client.flush();
+    expect(items).toHaveLength(2);
+    await advance(1_000);
+    expect(reports()).toHaveLength(1);
+    await advance(DAY - 1_000);
+    expect(reports().map((item) => item.trigger)).toEqual(["start", "interval"]);
+    await client.close();
+  });
+
+  test("202 の header の interval を次の判定から使う", async () => {
+    const { client, reports, advance } = recordingClient({
+      "X-Monica-Presence-Interval-Ms": "3600000",
+    });
+    await client.flush();
+    await advance(3_600_000);
+    expect(reports().map((item) => item.trigger)).toEqual(["start", "interval"]);
+    await client.close();
+  });
+
+  test("close() のあとはタイマーで送らない", async () => {
+    const { client, reports, advance } = recordingClient();
+    await client.close();
+    await advance(DAY * 2);
+    expect(reports()).toHaveLength(1);
+  });
+
+  test("serverless は start だけ送り、タイマーを持たない", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(T0);
+    let requests = 0;
+    const client = createNodeClient(
+      {
+        dsn: "https://secret@ingest.example.test/1",
+        environment: "production",
+        fetch: async () => {
+          requests += 1;
+          return new Response(null, { status: 202 });
+        },
+      },
+      "serverless",
+    );
+    await client.flush();
+    expect(requests).toBe(1);
+    jest.setSystemTime(T0 + DAY * 2);
+    jest.advanceTimersByTime(DAY * 2);
+    await client.flush();
+    expect(requests).toBe(1);
+  });
+});

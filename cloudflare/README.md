@@ -137,6 +137,9 @@ Worker の外側で起きた未捕捉例外まで集めたい場合は Tail Work
   送信は途中で打ち切られる。
 - client は request ごとに作ってよい。`401` で止まるのはその client だけなので、
   鍵が失効しても次の request で再び 1 回 POST する。
+- client は request の中で作る（global scope では fetch できない）。isolate で最初に作った
+  client が稼働確認の `client_report` を 1 通送る。`captureException` / `flush()` を
+  `waitUntil()` に載せればそれも待つ。
 
 ## ライセンス
 

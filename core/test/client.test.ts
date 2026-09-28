@@ -3,7 +3,11 @@ import {
   createCoreClient,
   type CaptureItemInput,
   type MonicaEnvelope,
+  type MonicaItem,
   type MonicaTransport,
+  type PresenceState,
+  type PresenceStore,
+  type TransportResult,
 } from "../src/index.js";
 
 const packageMetadata = (await Bun.file(
@@ -186,7 +190,7 @@ describe("createCoreClient", () => {
     await client.capture(errorInput("four"));
     releaseFirstSend?.();
     expect(await client.flush()).toEqual({ accepted: true, discarded: 0, remaining: 0 });
-    expect(envelopes.map((envelope) => envelope.items[0]?.message)).toEqual([
+    expect(envelopes.map((envelope) => (envelope.items[0] as MonicaItem | undefined)?.message)).toEqual([
       "one",
       "three",
       "four",
@@ -221,4 +225,219 @@ function acceptingTransport(): MonicaTransport {
 
 function errorInput(message: string): CaptureItemInput {
   return { type: "error", platform: "node", level: "error", message };
+}
+
+describe("checkPresence", () => {
+  const DAY = 86_400_000;
+
+  /** 時刻を進められる時計と、応答を差し替えられる transport */
+  function presenceHarness(
+    options: { applySampleRate?: boolean; random?: () => number; store?: PresenceStore } = {},
+  ) {
+    let clock = Date.parse("2026-08-30T00:00:00.000Z");
+    const envelopes: MonicaEnvelope[] = [];
+    let respond = (): TransportResult => ({ accepted: true, status: 202 });
+    const client = createCoreClient({
+      transport: {
+        async send(envelope) {
+          envelopes.push(envelope);
+          return respond();
+        },
+      },
+      environment: "production",
+      release: "1.2.3",
+      now: () => new Date(clock),
+      random: options.random,
+      presence: {
+        platform: "node",
+        applySampleRate: options.applySampleRate,
+        store: options.store,
+      },
+    });
+    const reports = () =>
+      envelopes.filter((envelope) => envelope.items[0]?.type === "client_report");
+    return {
+      client,
+      envelopes,
+      reports,
+      advance(ms: number) {
+        clock += ms;
+      },
+      respondWith(next: () => TransportResult) {
+        respond = next;
+      },
+    };
+  }
+
+  test("start の client_report を単独の envelope で送る", async () => {
+    const { client, envelopes } = presenceHarness();
+    expect(await client.checkPresence("start")).toBe(DAY);
+    expect(envelopes).toEqual([
+      {
+        sdk: { name: "@ah-monica/core", version: packageMetadata.version },
+        sent_at: "2026-08-30T00:00:00.000Z",
+        discarded: 0,
+        items: [
+          {
+            type: "client_report",
+            timestamp: "2026-08-30T00:00:00.000Z",
+            platform: "node",
+            environment: "production",
+            trigger: "start",
+            release: "1.2.3",
+          },
+        ],
+      },
+    ]);
+  });
+
+  test("presence を渡していない client は何も送らない", async () => {
+    const envelopes: MonicaEnvelope[] = [];
+    const client = createCoreClient({
+      transport: { send: async (envelope) => (envelopes.push(envelope), { accepted: true }) },
+      environment: "production",
+    });
+    await client.checkPresence("start");
+    expect(envelopes).toHaveLength(0);
+  });
+
+  test("202 から interval 未満は送らず、以上沈黙すると 1 通だけ送る", async () => {
+    const h = presenceHarness();
+    await h.client.checkPresence("start");
+    h.advance(DAY - 1);
+    expect(await h.client.checkPresence("interval")).toBe(1);
+    expect(h.reports()).toHaveLength(1);
+    h.advance(1);
+    expect(await h.client.checkPresence("interval")).toBe(DAY);
+    expect(await h.client.checkPresence("interval")).toBe(DAY);
+    expect(h.reports().map((envelope) => envelope.items[0])).toMatchObject([
+      { trigger: "start" },
+      { trigger: "interval" },
+    ]);
+  });
+
+  test("error envelope の 202 で期限が伸びる", async () => {
+    const h = presenceHarness();
+    await h.client.checkPresence("start");
+    h.advance(DAY - 1_000);
+    await h.client.capture({ type: "error", platform: "node", level: "error" });
+    await h.client.flush();
+    h.advance(1_000);
+    expect(await h.client.checkPresence("interval")).toBe(DAY - 1_000);
+    expect(h.reports()).toHaveLength(1);
+  });
+
+  test("queue に error が溜まっている間は送らない", async () => {
+    const h = presenceHarness();
+    await h.client.capture({ type: "error", platform: "node", level: "error" });
+    await h.client.checkPresence("start");
+    expect(h.envelopes).toHaveLength(0);
+    await h.client.close();
+  });
+
+  test("受理されなかった送信は数えず、次の interval で送り直す", async () => {
+    const h = presenceHarness();
+    h.respondWith(() => ({ accepted: false, status: 503 }));
+    expect(await h.client.checkPresence("start")).toBe(DAY);
+    h.respondWith(() => ({ accepted: true, status: 202 }));
+    expect(await h.client.checkPresence("interval")).toBe(DAY);
+    expect(h.reports()).toHaveLength(2);
+    // 捨てた 1 件は次の envelope の discarded に載る
+    expect(h.reports()[1]?.discarded).toBe(1);
+  });
+
+  test("401 のあとは送らない", async () => {
+    const h = presenceHarness();
+    h.respondWith(() => ({ accepted: false, status: 401, stop: true }));
+    await h.client.checkPresence("start");
+    h.advance(DAY);
+    await h.client.checkPresence("interval");
+    expect(h.envelopes).toHaveLength(1);
+  });
+
+  test("202 の header の interval を保存し、壊れた header と header 無しでは保存値を残す", async () => {
+    const h = presenceHarness();
+    h.respondWith(() => ({ accepted: true, status: 202, presence: { intervalMs: "3600000" } }));
+    expect(await h.client.checkPresence("start")).toBe(3_600_000);
+    for (const broken of ["59999", "1e7", "3600000.5", "abc", "-3600000", ""]) {
+      h.respondWith(() => ({ accepted: true, status: 202, presence: { intervalMs: broken } }));
+      h.advance(3_600_000);
+      expect(await h.client.checkPresence("interval"), broken).toBe(3_600_000);
+    }
+    h.respondWith(() => ({ accepted: true, status: 202 }));
+    h.advance(3_600_000);
+    expect(await h.client.checkPresence("interval")).toBe(3_600_000);
+    h.advance(3_600_000 - 1);
+    await h.client.checkPresence("interval");
+    expect(h.reports()).toHaveLength(8);
+  });
+
+  test("配布物は保存した sample rate で間引き、サーバは間引かない", async () => {
+    const store = memoryStore({ sampleRate: 0.5 });
+    const distributed = presenceHarness({ applySampleRate: true, random: () => 0.5, store });
+    await distributed.client.checkPresence("start");
+    expect(distributed.envelopes).toHaveLength(0);
+
+    const sampledIn = presenceHarness({ applySampleRate: true, random: () => 0.49, store });
+    await sampledIn.client.checkPresence("start");
+    expect(sampledIn.envelopes).toHaveLength(1);
+
+    const server = presenceHarness({ random: () => 0.99, store: memoryStore({ sampleRate: 0.5 }) });
+    await server.client.checkPresence("start");
+    expect(server.envelopes).toHaveLength(1);
+  });
+
+  test("header の sample rate を保存し、範囲外や指数表記は無視する", async () => {
+    const store = memoryStore({});
+    const h = presenceHarness({ store });
+    for (const [header, expected] of [
+      ["0.25", 0.25],
+      ["0.001", 0.25],
+      ["1.5", 0.25],
+      ["1e-1", 0.25],
+      ["1", 1],
+      ["0.01", 0.01],
+    ] as const) {
+      h.respondWith(() => ({ accepted: true, status: 202, presence: { sampleRate: header } }));
+      await h.client.capture({ type: "error", platform: "node", level: "error" });
+      await h.client.flush();
+      expect(store.load()?.sampleRate, header).toBe(expected);
+    }
+  });
+
+  test("差し替えた store に前回の 202 があれば、作り直しても interval 内は送らない", async () => {
+    const store = memoryStore({});
+    const first = presenceHarness({ store });
+    await first.client.checkPresence("start");
+    expect(first.envelopes).toHaveLength(1);
+    const second = presenceHarness({ store });
+    second.advance(DAY - 1);
+    expect(await second.client.checkPresence("start")).toBe(1);
+    expect(second.envelopes).toHaveLength(0);
+  });
+
+  test("store が throw しても送信は続く", async () => {
+    const h = presenceHarness({
+      store: {
+        load: () => {
+          throw new Error("denied");
+        },
+        save: () => {
+          throw new Error("denied");
+        },
+      },
+    });
+    expect(await h.client.checkPresence("start")).toBe(DAY);
+    expect(h.envelopes).toHaveLength(1);
+  });
+});
+
+function memoryStore(initial: PresenceState): PresenceStore {
+  let state: PresenceState | undefined = initial;
+  return {
+    load: () => state,
+    save: (next) => {
+      state = next;
+    },
+  };
 }

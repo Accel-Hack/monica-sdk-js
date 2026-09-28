@@ -6,6 +6,7 @@ import {
   type MonicaExceptionValue,
   type MonicaFrame,
   type MonicaRequest,
+  type PresenceState,
 } from "@ah-monica/core";
 import { SDK_VERSION } from "./version.js";
 import type {
@@ -19,6 +20,10 @@ const DEFAULT_FLUSH_TIMEOUT_MS = 2_000;
 const DEFAULT_MAX_CAUSE_DEPTH = 10;
 const DEFAULT_MAX_STACK_FRAMES = 200;
 
+// client は request ごとに作られるので、稼働確認の状態は isolate に 1 つ持つ。
+// これで start は isolate ごとに 1 回になる（dsn と environment が違えば別に数える）
+const isolatePresence = new Map<string, PresenceState>();
+
 export function createCloudflareClient(
   options: CloudflareClientOptions,
 ): MonicaCloudflareClient {
@@ -28,6 +33,7 @@ export function createCloudflareClient(
   const flushTimeoutMs = options.flushTimeoutMs ?? DEFAULT_FLUSH_TIMEOUT_MS;
   const maxCauseDepth = options.maxCauseDepth ?? DEFAULT_MAX_CAUSE_DEPTH;
   const maxStackFrames = options.maxStackFrames ?? DEFAULT_MAX_STACK_FRAMES;
+  const presenceKey = `${options.dsn ?? ""}\n${options.environment}`;
   const core = createCoreClient({
     transport: createFetchTransport({
       dsn: options.dsn,
@@ -42,7 +48,17 @@ export function createCloudflareClient(
     sampleRate: options.sampleRate,
     beforeSend: options.beforeSend,
     sdk: { name: "@ah-monica/cloudflare", version: SDK_VERSION },
+    presence: {
+      platform: "javascript",
+      store: {
+        load: () => isolatePresence.get(presenceKey),
+        save: (state) => void isolatePresence.set(presenceKey, state),
+      },
+    },
   });
+  // Workers にはタイマーが無い。送信中の分は flush() が待つので、captureException を
+  // waitUntil に載せればこの送信も含めて handler の後まで生きる
+  void core.checkPresence("start");
 
   async function captureAndFlush(
     input: CaptureItemInput,

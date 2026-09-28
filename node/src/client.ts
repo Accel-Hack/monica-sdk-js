@@ -24,7 +24,17 @@ interface ScopeState {
   breadcrumbs: MonicaBreadcrumb[];
 }
 
-export function createNodeClient(options: NodeClientOptions): MonicaNodeClient {
+// setTimeout は 2^31-1 ms を超えると即座に発火する
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+/**
+ * `runtime` は @ah-monica/next の server adapter のためのもの。serverless では日次の
+ * タイマーが発火しないので、`"serverless"` は起動時の `start` だけを送る。
+ */
+export function createNodeClient(
+  options: NodeClientOptions,
+  runtime: "long-lived" | "serverless" = "long-lived",
+): MonicaNodeClient {
   const maxBreadcrumbs = positiveInteger(options.maxBreadcrumbs) ? options.maxBreadcrumbs : 50;
   const storage = new AsyncLocalStorage<ScopeState>();
   const globalScope = emptyScope();
@@ -45,7 +55,28 @@ export function createNodeClient(options: NodeClientOptions): MonicaNodeClient {
     flushIntervalMs: options.flushIntervalMs,
     beforeSend: options.beforeSend,
     sdk: { name: "@ah-monica/node", version: SDK_VERSION },
+    presence: { platform: "node" },
   });
+
+  // core の flush timer は queue が空だと止まるので、稼働確認のタイマーは別に持つ
+  let presenceTimer: ReturnType<typeof setTimeout> | undefined;
+  let closed = false;
+  function schedulePresence(delayMs: number): void {
+    if (closed) return;
+    presenceTimer = setTimeout(() => {
+      void core.checkPresence("interval").then(schedulePresence);
+    }, Math.min(delayMs, MAX_TIMER_DELAY_MS));
+    const candidate = presenceTimer as unknown as { unref?: () => void };
+    candidate.unref?.();
+  }
+  const started = core.checkPresence("start");
+  if (runtime === "long-lived") void started.then(schedulePresence);
+
+  function close(timeoutMs?: number) {
+    closed = true;
+    clearTimeout(presenceTimer);
+    return core.close(timeoutMs);
+  }
 
   function currentScope(): ScopeState {
     return storage.getStore() ?? globalScope;
@@ -203,7 +234,7 @@ export function createNodeClient(options: NodeClientOptions): MonicaNodeClient {
     addBreadcrumb,
     withScope,
     flush: core.flush,
-    close: core.close,
+    close,
     installProcessHooks,
   };
 }

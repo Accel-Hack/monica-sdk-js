@@ -308,12 +308,15 @@ describe("public contract: 422 の診断は adapter からも既定で出る", (
   });
 
   function clientReturning422(onDiagnostic?: NodeClientOptions["onDiagnostic"]) {
+    // 1 通目は起動時の client_report。それは受理させ、error の envelope だけ 422 にする
+    let requests = 0;
     return createNodeClient({
       dsn: "https://msk_example@ingest.example.test/1",
       environment: "production",
       maxRetries: 0,
       ...(onDiagnostic !== undefined ? { onDiagnostic } : {}),
-      fetch: async () => new Response(body, { status: 422 }),
+      fetch: async () =>
+        requests++ === 0 ? new Response(null, { status: 202 }) : new Response(body, { status: 422 }),
     });
   }
 

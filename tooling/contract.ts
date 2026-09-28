@@ -54,6 +54,13 @@ export async function readLimits(): Promise<Limits> {
 /** transport.json。`status` は HTTP status の文字列（`5xx` のような範囲を含む）から action へ */
 export interface TransportContract {
   status: Record<string, string>;
+  presence: {
+    interval_ms: number;
+    min_interval_ms: number;
+    sample_rate: number;
+    min_sample_rate: number;
+    override_headers: { interval_ms: string; sample_rate: string };
+  };
   retry: {
     retryable_statuses: string[];
     retry_on_network_error: boolean;

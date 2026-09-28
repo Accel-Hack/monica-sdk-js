@@ -1,6 +1,8 @@
 export { createCoreClient } from "./client.js";
 export {
   createFetchTransport,
+  PRESENCE,
+  readPresenceHeaders,
   type FetchLike,
   type FetchTransportOptions,
 } from "./transport.js";
@@ -11,6 +13,7 @@ export type {
   CoreClientOptions,
   FlushResult,
   MonicaBreadcrumb,
+  MonicaClientReportItem,
   MonicaCoreClient,
   MonicaEnvelope,
   MonicaErrorItem,
@@ -21,6 +24,9 @@ export type {
   MonicaRequest,
   MonicaTransport,
   MonicaUser,
+  PresenceOptions,
+  PresenceState,
+  PresenceStore,
   TransportDiagnostic,
   TransportDiagnosticHandler,
   TransportError,

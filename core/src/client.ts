@@ -1,12 +1,15 @@
-import { NOOP_TRANSPORT } from "./transport.js";
+import { NOOP_TRANSPORT, PRESENCE } from "./transport.js";
 import { SDK_VERSION } from "./version.js";
 import type {
   CaptureHint,
   CaptureItemInput,
   CoreClientOptions,
   FlushResult,
+  MonicaClientReportItem,
   MonicaCoreClient,
   MonicaItem,
+  PresenceState,
+  PresenceStore,
   TransportResult,
 } from "./types.js";
 
@@ -31,7 +34,15 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
   const generateEventId = options.generateEventId ?? (() => crypto.randomUUID());
   const sdk = options.sdk ?? { name: "@ah-monica/core", version: SDK_VERSION };
 
-  const queue: MonicaItem[] = [];
+  let presenceMemory: PresenceState | undefined;
+  const presenceStore: PresenceStore = options.presence?.store ?? {
+    load: () => presenceMemory,
+    save: (state) => {
+      presenceMemory = state;
+    },
+  };
+
+  const queue: Array<MonicaItem | MonicaClientReportItem> = [];
   const pendingCaptures = new Set<Promise<unknown>>();
   let discarded = 0;
   // dsn が無ければ何も送らない。capture は null、flush / close は即座に解決する
@@ -90,7 +101,7 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
    * rejection は unhandled rejection になり Node は既定でプロセスを落とす。
    */
   async function deliver(
-    items: MonicaItem[],
+    items: Array<MonicaItem | MonicaClientReportItem>,
     reportedDiscarded: number,
     sentAt: string,
     signal?: AbortSignal,
@@ -109,7 +120,10 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
     }
     // 自前 transport が stop を返さなくても、契約（drop_and_stop）どおり止める
     if (result.stop || result.status === 401) stopSending();
-    if (result.accepted) return true;
+    if (result.accepted) {
+      recordAccepted(result.presence);
+      return true;
+    }
     // 分割が成功すると deliver は true を返すので、ここで書かないと 413 を受けた
     // 事実がどこにも残らない。送信前に JSON を 1,000,000 byte 未満に抑えていて
     // 契約上の上限は gzip 後 1 MiB なので、spec どおりの ingest から 413 は返らない。
@@ -138,7 +152,7 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
     if (queue.length === 0) return true;
     clearTimer();
     let oversizedDrops = 0;
-    let items: MonicaItem[] | undefined;
+    let items: Array<MonicaItem | MonicaClientReportItem> | undefined;
     let sentAt = "";
     while (queue.length > 0 && !items) {
       try {
@@ -193,6 +207,67 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
       if (sending === operation) sending = undefined;
       scheduleTimer();
     }
+  }
+
+  function loadPresence(): PresenceState {
+    try {
+      return presenceStore.load() ?? {};
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * 稼働確認の状態を持つのはここだけ。受理された時刻を残し、応答 header の値は
+   * 検証を通ったものだけ上書きする。header が無い・壊れているときは保存値を残す。
+   */
+  function recordAccepted(headers: TransportResult["presence"]): void {
+    try {
+      const lastAcceptedAt = now().getTime();
+      if (!Number.isFinite(lastAcceptedAt)) return;
+      const state = { ...loadPresence(), lastAcceptedAt };
+      const intervalMs = parsePresenceInterval(headers?.intervalMs);
+      const sampleRate = parsePresenceSampleRate(headers?.sampleRate);
+      if (intervalMs !== undefined) state.intervalMs = intervalMs;
+      if (sampleRate !== undefined) state.sampleRate = sampleRate;
+      presenceStore.save(state);
+    } catch {
+      // 保存できなくても送信結果は変えない。次の判定で送り直すだけ
+    }
+  }
+
+  async function checkPresence(trigger: "start" | "interval"): Promise<number> {
+    const state = loadPresence();
+    const intervalMs = presenceInterval(state);
+    const presence = options.presence;
+    if (!presence || closed) return intervalMs;
+    let at: number;
+    try {
+      at = now().getTime();
+    } catch {
+      return intervalMs;
+    }
+    const last = state.lastAcceptedAt;
+    // 時計が戻った（保存時刻が未来）ときは保存値を信用せず送る
+    if (last !== undefined && at >= last && at - last < intervalMs) return last + intervalMs - at;
+    // 溜まっている error の flush が 202 を受ければ稼働は分かる
+    if (queue.length > 0 || sending) return intervalMs;
+    if (presence.applySampleRate && random() >= presenceSampleRate(state)) {
+      return intervalMs;
+    }
+    const item: MonicaClientReportItem = {
+      type: "client_report",
+      timestamp: new Date(at).toISOString(),
+      platform: presence.platform,
+      environment: options.environment,
+      trigger,
+      ...(options.release !== undefined ? { release: options.release } : {}),
+    };
+    // queue は空で sending も無いので、sendBatch はこの 1 件だけを同期的に取り出す
+    queue.push(item);
+    await sendBatch();
+    // 尽きて捨てた場合も次の interval まで送らない
+    return presenceInterval(loadPresence());
   }
 
   function capture(input: CaptureItemInput, hint: CaptureHint = {}): Promise<string | null> {
@@ -290,7 +365,35 @@ export function createCoreClient(options: CoreClientOptions): MonicaCoreClient {
     return flush(timeoutMs);
   }
 
-  return { capture, flush, close };
+  return { capture, flush, close, checkPresence };
+}
+
+// 差し替えた store（端末のストレージ）の値は書き換えられうるので、読むたびに範囲を確かめる
+function presenceInterval(state: PresenceState): number {
+  const value = state.intervalMs;
+  return Number.isSafeInteger(value) && (value as number) >= PRESENCE.minIntervalMs
+    ? (value as number)
+    : PRESENCE.intervalMs;
+}
+
+function presenceSampleRate(state: PresenceState): number {
+  const value = state.sampleRate;
+  return typeof value === "number" && value >= PRESENCE.minSampleRate && value <= 1
+    ? value
+    : PRESENCE.sampleRate;
+}
+
+/** 指数表記・小数・下限未満は無視する（その header だけ） */
+function parsePresenceInterval(value: string | undefined): number | undefined {
+  if (value === undefined || !/^\d+$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= PRESENCE.minIntervalMs ? parsed : undefined;
+}
+
+function parsePresenceSampleRate(value: string | undefined): number | undefined {
+  if (value === undefined || !/^\d+(\.\d+)?$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return parsed >= PRESENCE.minSampleRate && parsed <= 1 ? parsed : undefined;
 }
 
 type RejectionDetails = Pick<FlushResult, "status" | "issues" | "error">;

@@ -37,6 +37,27 @@ export type FetchLike = (
  */
 const MAX_ERROR_BODY_BYTES = 64 * 1024;
 
+/** transport.json の `presence`。契約テストが値の一致を断言する */
+export const PRESENCE = {
+  intervalMs: 86_400_000,
+  minIntervalMs: 60_000,
+  sampleRate: 1,
+  minSampleRate: 0.01,
+  intervalHeader: "X-Monica-Presence-Interval-Ms",
+  sampleRateHeader: "X-Monica-Presence-Sample-Rate",
+} as const;
+
+/** 受理された応答の presence header を TransportResult の形で返す。検証は client が行う */
+export function readPresenceHeaders(headers: Headers): TransportResult["presence"] {
+  const intervalMs = headers.get(PRESENCE.intervalHeader) ?? undefined;
+  const sampleRate = headers.get(PRESENCE.sampleRateHeader) ?? undefined;
+  if (intervalMs === undefined && sampleRate === undefined) return undefined;
+  return {
+    ...(intervalMs !== undefined ? { intervalMs } : {}),
+    ...(sampleRate !== undefined ? { sampleRate } : {}),
+  };
+}
+
 /**
  * dsn が無いときの transport。createCoreClient はこれを受け取ると、最初から閉じた
  * （capture が `null` を返し、timer も送信も持たない）client を作る。
@@ -95,7 +116,8 @@ export function createFetchTransport(options: FetchTransportOptions): MonicaTran
           });
           if (response.ok) {
             discardBody(response);
-            return { accepted: true, status: response.status };
+            const presence = readPresenceHeaders(response.headers);
+            return { accepted: true, status: response.status, ...(presence ? { presence } : {}) };
           }
           if (response.status !== 429 && response.status < 500) {
             // ingest.md: 429 以外の 4xx は恒久的な失敗。破棄することは変えず、

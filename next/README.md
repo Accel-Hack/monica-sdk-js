@@ -137,6 +137,8 @@ client / server とも同じ option を取る（server は `@ah-monica/node` と
 - `@ah-monica/next/client` に secret key（`msk_...`）を渡すと `TypeError` を投げる。
 - client の `installGlobalHandlers()` は subresource（`<img>` / `<script>` / `<link>`）の
   読み込み失敗を送らない。送るのは未捕捉の例外と unhandled rejection だけ。
+- client はページ読み込み時に稼働確認の `client_report` を送り、前回の時刻を
+  `localStorage`（無ければ `sessionStorage`）の `monica.presence` に持つ。
 - root export は無い。`@ah-monica/next` をそのまま import することはできない。
 
 ## ライセンス

@@ -6,6 +6,8 @@ import {
   type MonicaFrame,
   type MonicaRequest,
   type MonicaUser,
+  type PresenceState,
+  type PresenceStore,
 } from "@ah-monica/core";
 import { SDK_VERSION } from "./version.js";
 import type {
@@ -44,7 +46,10 @@ export function createNextClient(options: NextClientOptions): MonicaNextClient {
     flushIntervalMs: options.flushIntervalMs,
     beforeSend: options.beforeSend,
     sdk: { name: "@ah-monica/next", version: SDK_VERSION },
+    presence: { platform: "javascript", store: browserPresenceStore(), applySampleRate: true },
   });
+  // SSR 中に作られた client は送らない。ページ読み込み時の 1 回だけ判定する
+  if (typeof window !== "undefined") void core.checkPresence("start");
   let removeGlobalHandlers: (() => void) | undefined;
 
   function contextValues(context: NextClientCaptureContext) {
@@ -182,6 +187,40 @@ export function createNextClient(options: NextClientOptions): MonicaNextClient {
     flush: core.flush,
     close,
   };
+}
+
+const PRESENCE_STORAGE_KEY = "monica.presence";
+
+/**
+ * 前回 202 を受けた時刻と、header で上書きされた interval / rate を端末に持つ。
+ * localStorage が使えなければ sessionStorage、どちらも無ければメモリ。
+ */
+function browserPresenceStore(): PresenceStore {
+  const storage = usableStorage("localStorage") ?? usableStorage("sessionStorage");
+  let memory: PresenceState | undefined;
+  return {
+    load() {
+      if (!storage) return memory;
+      const raw = storage.getItem(PRESENCE_STORAGE_KEY);
+      return raw ? (JSON.parse(raw) as PresenceState) : undefined;
+    },
+    save(state) {
+      if (storage) storage.setItem(PRESENCE_STORAGE_KEY, JSON.stringify(state));
+      else memory = state;
+    },
+  };
+}
+
+function usableStorage(name: "localStorage" | "sessionStorage"): Storage | undefined {
+  try {
+    // private mode や cookie 無効では、読むだけで throw するか setItem が throw する
+    const storage = (globalThis as Partial<Record<typeof name, Storage>>)[name];
+    if (!storage) return undefined;
+    storage.setItem(PRESENCE_STORAGE_KEY, storage.getItem(PRESENCE_STORAGE_KEY) ?? "");
+    return storage;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
