@@ -58,7 +58,14 @@ export function createNextClient(options: NextClientOptions): MonicaNextClient {
         }
       : {}),
   });
-  // ページ読み込み時の 1 回だけ判定する
+  // ページ読み込み時と、タブや WebView が再び可視になったときに判定する。タイマーは持たない。
+  // WebView に埋め込んだ SPA は読み込みが 1 回きりなので、可視化でも見ないと start が止まる。
+  // interval 内なら core が送らないので、可視化のたびに送ることにはならない
+  const presenceDocument = inBrowser && publicKey ? globalThis.document : undefined;
+  const onPresenceVisible = () => {
+    if (presenceDocument?.visibilityState === "visible") void core.checkPresence("start");
+  };
+  presenceDocument?.addEventListener("visibilitychange", onPresenceVisible);
   void core.checkPresence("start");
   let removeGlobalHandlers: (() => void) | undefined;
 
@@ -185,6 +192,7 @@ export function createNextClient(options: NextClientOptions): MonicaNextClient {
 
   async function close(timeoutMs?: number) {
     removeGlobalHandlers?.();
+    presenceDocument?.removeEventListener("visibilitychange", onPresenceVisible);
     return core.close(timeoutMs);
   }
 
