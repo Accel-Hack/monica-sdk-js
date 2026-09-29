@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, jest, test } from "bun:test";
+import { afterEach, describe, expect, jest, setSystemTime, test } from "bun:test";
 import { createNextClient, type MonicaItem } from "../src/client/index.js";
 
 const originalAddEventListener = globalThis.addEventListener;
@@ -166,12 +166,18 @@ describe("稼働確認（client_report）", () => {
   const DAY = 86_400_000;
   const T0 = Date.parse("2026-08-30T00:00:00.000Z");
   const globals = globalThis as Record<string, unknown>;
-  const saved = { window: globals.window, localStorage: globals.localStorage, random: Math.random };
+  const saved = {
+    window: globals.window,
+    localStorage: globals.localStorage,
+    document: globals.document,
+    random: Math.random,
+  };
 
   afterEach(() => {
     jest.useRealTimers();
+    setSystemTime();
     Math.random = saved.random;
-    for (const name of ["window", "localStorage"] as const) {
+    for (const name of ["window", "localStorage", "document"] as const) {
       if (saved[name] === undefined) delete globals[name];
       else globals[name] = saved[name];
     }
@@ -282,6 +288,44 @@ describe("稼働確認（client_report）", () => {
     inBrowser(undefined);
     expect(await pageLoad()).toBe(1);
     expect(await pageLoad()).toBe(1);
+  });
+
+  test("可視になったときも判定し、interval 内と hidden では送らない", async () => {
+    // fake timers は使わず時計だけ止める（送信の await を本物のタイマーで進める）
+    setSystemTime(T0);
+    globals.window = globalThis;
+    globals.localStorage = fakeStorage();
+    const document = Object.assign(new EventTarget(), { visibilityState: "visible" });
+    globals.document = document;
+    const triggers: string[] = [];
+    const client = createNextClient({
+      dsn: "https://mpk_test@ingest.example.test/project-sample",
+      environment: "production",
+      fetch: async (input, init) => {
+        const envelope = await readEnvelope(new Request(input, init));
+        triggers.push(...envelope.items.map((item) => (item as { trigger?: string }).trigger!));
+        return new Response(null, { status: 202 });
+      },
+    });
+    async function becomes(state: "visible" | "hidden") {
+      document.visibilityState = state;
+      document.dispatchEvent(new Event("visibilitychange"));
+      await client.flush();
+    }
+    await client.flush();
+    expect(triggers).toEqual(["start"]);
+    setSystemTime(T0 + DAY - 1);
+    await becomes("visible");
+    expect(triggers).toEqual(["start"]);
+    setSystemTime(T0 + DAY);
+    await becomes("hidden");
+    expect(triggers).toEqual(["start"]);
+    await becomes("visible");
+    expect(triggers).toEqual(["start", "start"]);
+    await client.close();
+    setSystemTime(T0 + 3 * DAY);
+    await becomes("visible");
+    expect(triggers).toEqual(["start", "start"]);
   });
 
   test("SSR（window が無い）では送らない", async () => {

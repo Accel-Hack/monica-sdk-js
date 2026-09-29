@@ -164,11 +164,14 @@ client / server とも同じ option を取る（server は `@ah-monica/node` と
 
 Client:
 
-- ブラウザで `createNextClient()` を評価したとき（ページ読み込み時）に 1 回だけ `trigger: "start"` を判定する。
+- ブラウザで `createNextClient()` を評価したとき（ページ読み込み時）と、タブや WebView が再び可視に
+  なったとき（`visibilitychange` で `visible`）に `trigger: "start"` を判定する。interval 内なら送らない。
   ページを開いたままでも定期送信はしない。SSR 中に作られた client は送らず、storage にも触らない
 - 状態（interval を数え始めた時刻と header の値）は `localStorage` の `monica.presence.<public key>` に JSON で持つ。
   `localStorage` が使えなければ `sessionStorage`（タブごと）、どちらも使えなければメモリ（読み込みごとに判定し直す）
 - `X-Monica-Presence-Sample-Rate` の率で端末ごとに間引く。外れた端末もその interval の間は抽選し直さない
+- WebView に埋め込む場合: 読み込みが 1 回きりの SPA でも、アプリが前面に戻って WebView が可視になるたびに
+  判定する。DOM storage が無効（Android の `setDomStorageEnabled(false)` など）だとメモリに持つので、読み込みのたびに送る
 
 Server:
 
