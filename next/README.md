@@ -125,6 +125,23 @@ client / server とも同じ option を取る（server は `@ah-monica/node` と
 | `beforeSend` | `(item, hint) => item \| null \| Promise<...>` | なし | `null` を返すと破棄 |
 | `fetch` | `typeof fetch` | `globalThis.fetch` | 送信に使う fetch |
 
+## 稼働確認
+
+共通の仕組みは [ルートの README](../README.md#稼働確認) にある。
+
+Client:
+
+- ブラウザで `createNextClient()` を評価したとき（ページ読み込み時）に 1 回だけ `trigger: "start"` を判定する。
+  ページを開いたままでも定期送信はしない。SSR 中に作られた client は送らず、storage にも触らない
+- 状態（interval を数え始めた時刻と header の値）は `localStorage` の `monica.presence.<public key>` に JSON で持つ。
+  `localStorage` が使えなければ `sessionStorage`（タブごと）、どちらも使えなければメモリ（読み込みごとに判定し直す）
+- `X-Monica-Presence-Sample-Rate` の率で端末ごとに間引く。外れた端末もその interval の間は抽選し直さない
+
+Server:
+
+- [`@ah-monica/node`](../node/README.md#稼働確認) と同じ（プロセスのメモリに状態を持ち、`unref` したタイマーで判定する）
+- `next build` の間（`NEXT_PHASE=phase-production-build`）は送らない
+
 ## 送信結果と診断
 
 拒否されたときは client / server とも既定で `console.warn` に 1 行出る（`422` / `401` / `413`）。
@@ -137,8 +154,6 @@ client / server とも同じ option を取る（server は `@ah-monica/node` と
 - `@ah-monica/next/client` に secret key（`msk_...`）を渡すと `TypeError` を投げる。
 - client の `installGlobalHandlers()` は subresource（`<img>` / `<script>` / `<link>`）の
   読み込み失敗を送らない。送るのは未捕捉の例外と unhandled rejection だけ。
-- client はページ読み込み時に稼働確認の `client_report` を送り、前回の時刻を
-  `localStorage`（無ければ `sessionStorage`）の `monica.presence.<API key>` に持つ。
 - root export は無い。`@ah-monica/next` をそのまま import することはできない。
 
 ## ライセンス

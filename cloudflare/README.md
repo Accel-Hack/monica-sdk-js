@@ -74,8 +74,7 @@ export default {
 
 ## 使い方
 
-request の入口で client を作り、`ctx.waitUntil(monica.flush())` を呼ぶ。isolate で最初の
-呼び出しが稼働確認の `client_report` を 1 通送り、`waitUntil` がその送信を待つ。
+request の入口で client を作り、`ctx.waitUntil(monica.flush())` を呼ぶ（[稼働確認](#稼働確認)）。
 
 `captureException()` は capture と flush の両方を終えてから解決する Promise を返す。
 handler の応答を待たせたくない場合は `captureExceptionInBackground(ctx, ...)` で
@@ -114,6 +113,16 @@ await monica.captureException(error, { tags: { trigger: "scheduled" } });
 Worker の外側で起きた未捕捉例外まで集めたい場合は Tail Worker も検討する。この adapter は、
 アプリケーションが捕捉して業務上の文脈を選んで送る例外を対象にする。
 
+## 稼働確認
+
+共通の仕組みは [ルートの README](../README.md#稼働確認) にある。
+
+- isolate で最初の `flush()` / `captureException()` / `captureMessage()` の呼び出しが
+  `trigger: "start"` を 1 通送る。client を作っただけでは送らない。`dsn` と `environment` の組ごとに数える
+- request の入口で `ctx.waitUntil(monica.flush())` を呼ぶ。`waitUntil` が無いと handler の終了で送信が打ち切られる
+- Workers にはタイマーが無いので `trigger: "interval"` は送らない。isolate が作り直されるたびに `start` を送る
+- 状態は isolate のメモリに持ち、ストレージには書かない
+
 ## オプション
 
 | option | 型 | default | 説明 |
@@ -143,8 +152,6 @@ Worker の外側で起きた未捕捉例外まで集めたい場合は Tail Work
   送信は途中で打ち切られる。
 - client は request ごとに作ってよい。`401` で止まるのはその client だけなので、
   鍵が失効しても次の request で再び 1 回 POST する。
-- 稼働確認を送るには、request の入口で `ctx.waitUntil(monica.flush())` を呼ぶ。
-  送るのは isolate ごとに 1 通で、client を作っただけでは送らない。
 
 ## ライセンス
 

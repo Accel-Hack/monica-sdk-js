@@ -129,16 +129,20 @@ URL と headers は収集しない。
 
 ## 稼働確認
 
-client を作ったときと、1 日 `202` を受けていないときに、稼働確認の `client_report`
-（`platform` / `environment` / `release` と送った契機だけ）を単独の envelope で送る。
-設定項目は無く、間隔と間引きは MONICA 側の project 設定で変わる。
+MONICA が SDK の稼働を知るために、SDK は `client_report` item 1 件だけの envelope を送る。
+載るのは `platform` / `environment` / `release` / `timestamp` と、送った契機の `trigger`
+（`start`: 起動・読み込み時、`interval`: 定期）だけ。送信先・認証・リトライ・`401` での停止は error と同じ。
 
-- `@ah-monica/node` / `@ah-monica/next/server`: 作成時に 1 通、以後は 1 日 `202` の無い日に 1 通
-  （`unref` したタイマー。`close()` で止まる）。`next build` の間は送らない
-- `@ah-monica/cloudflare`: isolate ごとに、最初の `flush()` / capture で 1 通だけ。
-  request の入口で `ctx.waitUntil(monica.flush())` を呼ぶ（[`cloudflare/README.md`](cloudflare/README.md)）
-- `@ah-monica/next/client`: ページ読み込み時に 1 通。前回の時刻を `localStorage`
-  （無ければ `sessionStorage`）の `monica.presence.<API key>` に持ち、1 日以内なら送らない
+- 直近の interval（既定 1 日）に `202` を受けた envelope が無いときだけ送る。error の envelope の
+  `202` でも期限は延びる。queue に error が溜まっている間は送らず、その送信の結果を待つ
+- 間隔と間引き率（間引きは `@ah-monica/next/client` だけに効く）は MONICA 側の project 設定で決まる。SDK は `202` の応答 header
+  `X-Monica-Presence-Interval-Ms` / `X-Monica-Presence-Sample-Rate` を保存し、次の判定から使う。
+  header が無い・値が不正なら保存済みの値（既定は 1 日・間引かない）のまま
+- SDK 側の設定項目は無い。`sampleRate` と `beforeSend` は `client_report` に効かない。`dsn` が無い client は送らない
+
+いつ判定するか・状態をどこに持つかは package ごとに違う。
+[`node/`](node/README.md#稼働確認) / [`cloudflare/`](cloudflare/README.md#稼働確認) /
+[`next/`](next/README.md#稼働確認) の README を参照。
 
 ## 送信結果と診断
 
