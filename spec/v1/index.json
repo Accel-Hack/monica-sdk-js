@@ -1,15 +1,15 @@
 {
   "version": "v1",
   "base": "https://spec.monica.accelhack.net/v1/",
-  "revision": "0cad0e46dff0f4dfabd8932f7967f57bf8493b4a57bee48a5349ba509a18a042",
+  "revision": "d123de64f22e0c66af7b0fe4bc1eb7d91c90447547c5cb973ceb752fd0180e75",
   "files": [
     {
       "path": "README.md",
-      "sha256": "8149a3bea5896af8b22f37d26afcece48ed2acf89d3130e426a4cabdee672d8a"
+      "sha256": "c2a336c668644eb975888798ed913b96ef24b3e17fa7ae90f4b9eff74394e622"
     },
     {
       "path": "envelope.json",
-      "sha256": "8f1b75d1417b111ad87a02d840e2e4e4943e05105a1530022c0f1217bb6ac95b"
+      "sha256": "36b68e2a8dc00f8144ef3d8ab670a2a59b7091072841cd521e99ae59dead8abc"
     },
     {
       "path": "error.json",
@@ -17,7 +17,7 @@
     },
     {
       "path": "ingest.md",
-      "sha256": "110c6f7cead38e851fb57d164a62932aa6bef44021e0dfcbb9210f8a2eb47302"
+      "sha256": "0f3de31c6bb2149ae8ac69be41908bd8db07ef098af8f32320193d668f931279"
     },
     {
       "path": "limits.json",
@@ -25,11 +25,23 @@
     },
     {
       "path": "payload.md",
-      "sha256": "1361c513847db4db07305b397a4f74c34aa6b505b62cc4bcbd8b4717411585a4"
+      "sha256": "2f17d7b27f510c088460364c3bb2a572fbe9c13ea750edd88e761c66245b6936"
     },
     {
       "path": "transport.json",
-      "sha256": "ff113a9bde2d114744991deae56d39a8497785c6c40347cd1901d7c8fc601b2b"
+      "sha256": "c8619a6af1a0e1ced3d5a044bd43cb2dbad6fd7235b8502cc533d12965ffd7a0"
+    },
+    {
+      "path": "vectors/envelope/client-report-missing-environment.json",
+      "sha256": "e2b1a82ecec9193a4cc4d9b1239f3ffd2000fa42226e05d60a14a003993e6e07"
+    },
+    {
+      "path": "vectors/envelope/client-report-only.json",
+      "sha256": "4c8523266e0566d9a4f40d8a6a184cedac9a70ed783f3540c31fa92e2b29aea4"
+    },
+    {
+      "path": "vectors/envelope/client-report-with-error.json",
+      "sha256": "a0e5a3e53d51ea202abb4279cc1a15aca9edecdfb1f127ad0e50f27681f3a803"
     },
     {
       "path": "vectors/envelope/empty-items.json",

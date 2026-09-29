@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, jest, test } from "bun:test";
 import { createNextClient, type MonicaItem } from "../src/client/index.js";
 
 const originalAddEventListener = globalThis.addEventListener;
@@ -161,3 +161,131 @@ async function readEnvelope(request: Request | undefined): Promise<CapturedEnvel
   const stream = request.body.pipeThrough(new DecompressionStream("gzip"));
   return new Response(stream).json() as Promise<CapturedEnvelope>;
 }
+
+describe("稼働確認（client_report）", () => {
+  const DAY = 86_400_000;
+  const T0 = Date.parse("2026-08-30T00:00:00.000Z");
+  const globals = globalThis as Record<string, unknown>;
+  const saved = { window: globals.window, localStorage: globals.localStorage, random: Math.random };
+
+  afterEach(() => {
+    jest.useRealTimers();
+    Math.random = saved.random;
+    for (const name of ["window", "localStorage"] as const) {
+      if (saved[name] === undefined) delete globals[name];
+      else globals[name] = saved[name];
+    }
+  });
+
+  const STORAGE_KEY = "monica.presence.mpk_test";
+
+  function fakeStorage(): Storage {
+    const values = new Map<string, string>();
+    return {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => void values.set(key, value),
+    } as Storage;
+  }
+
+  /** ページ読み込み 1 回ぶん。受け取った client_report の数を返す */
+  async function pageLoad(headers: Record<string, string> = {}): Promise<number> {
+    let reports = 0;
+    const client = createNextClient({
+      dsn: "https://mpk_test@ingest.example.test/project-sample",
+      environment: "production",
+      fetch: async (input, init) => {
+        const envelope = await readEnvelope(new Request(input, init));
+        expect(envelope.items).toHaveLength(1);
+        expect(envelope.items[0]).toMatchObject({
+          type: "client_report",
+          platform: "javascript",
+          trigger: "start",
+        });
+        reports += 1;
+        return new Response(null, { status: 202, headers });
+      },
+    });
+    await client.flush();
+    await client.close();
+    return reports;
+  }
+
+  function inBrowser(storage: Storage | undefined): void {
+    jest.useFakeTimers();
+    jest.setSystemTime(T0);
+    globals.window = globalThis;
+    if (storage) globals.localStorage = storage;
+  }
+
+  test("ページ読み込みで start を送り、localStorage の時刻で interval 内は送らない", async () => {
+    const storage = fakeStorage();
+    inBrowser(storage);
+    expect(await pageLoad()).toBe(1);
+    expect(JSON.parse(storage.getItem(STORAGE_KEY)!)).toEqual({ intervalStartedAt: T0 });
+    jest.setSystemTime(T0 + DAY - 1);
+    expect(await pageLoad()).toBe(0);
+    jest.setSystemTime(T0 + DAY);
+    expect(await pageLoad()).toBe(1);
+  });
+
+  test("202 の header の値を localStorage に保存し、sample rate で間引く", async () => {
+    const storage = fakeStorage();
+    inBrowser(storage);
+    expect(
+      await pageLoad({
+        "X-Monica-Presence-Interval-Ms": "3600000",
+        "X-Monica-Presence-Sample-Rate": "0.25",
+      }),
+    ).toBe(1);
+    expect(JSON.parse(storage.getItem(STORAGE_KEY)!)).toEqual({
+      intervalStartedAt: T0,
+      intervalMs: 3_600_000,
+      sampleRate: 0.25,
+    });
+    jest.setSystemTime(T0 + 3_600_000);
+    Math.random = () => 0.25;
+    expect(await pageLoad()).toBe(0);
+    // 間引きで見送ったら、同じ interval 内の読み込みでは抽選し直さない
+    Math.random = () => 0;
+    expect(await pageLoad()).toBe(0);
+    jest.setSystemTime(T0 + 2 * 3_600_000);
+    Math.random = () => 0.24;
+    // header 無しの応答では保存値を残す
+    expect(await pageLoad()).toBe(1);
+    expect(JSON.parse(storage.getItem(STORAGE_KEY)!)).toMatchObject({
+      intervalMs: 3_600_000,
+      sampleRate: 0.25,
+    });
+  });
+
+  test("storage のキーは project（API key）ごとに分かれ、別 project の start を止めない", async () => {
+    const storage = fakeStorage();
+    inBrowser(storage);
+    expect(await pageLoad()).toBe(1);
+    let otherReports = 0;
+    const other = createNextClient({
+      dsn: "https://mpk_other@ingest.example.test/project-other",
+      environment: "production",
+      fetch: async () => {
+        otherReports += 1;
+        return new Response(null, { status: 202 });
+      },
+    });
+    await other.flush();
+    await other.close();
+    expect(otherReports).toBe(1);
+    expect(storage.getItem("monica.presence.mpk_other")).not.toBeNull();
+    expect(storage.getItem(STORAGE_KEY)).not.toBeNull();
+  });
+
+  test("storage が無ければメモリに持ち、読み込みごとに送る", async () => {
+    inBrowser(undefined);
+    expect(await pageLoad()).toBe(1);
+    expect(await pageLoad()).toBe(1);
+  });
+
+  test("SSR（window が無い）では送らない", async () => {
+    expect(globals.window).toBeUndefined();
+    expect(await pageLoad()).toBe(0);
+  });
+});

@@ -56,7 +56,20 @@ await client.close(2_000);
 
 送信そのものを差し替える場合は `MonicaTransport`（`send(envelope, signal)` が
 `TransportResult` を返す）を実装して `transport` に渡す。`401` を返せば
-`createFetchTransport` と同じように client が停止する。
+`createFetchTransport` と同じように client が停止する。受理された応答の
+`X-Monica-Presence-Interval-Ms` / `X-Monica-Presence-Sample-Rate` は、読んだままの文字列を
+`TransportResult.presence` に入れて返す（`readPresenceHeaders(response.headers)`）。
+
+## 稼働確認
+
+共通の仕組みは [ルートの README](../README.md#稼働確認) にある。core は自分からは判定しない。
+adapter が起動時や定期的に `checkPresence` を呼ぶ。
+
+`presence` を渡した client だけが送る。`checkPresence("start" | "interval")` は
+直近の interval に `202` が無く queue が空なら `client_report` を 1 通送り、次に判定すべきまでの
+ミリ秒を返す。間引きで見送った・送信に失敗した場合も、次の interval まで判定し直さない。
+interval を数え始めた時刻（`intervalStartedAt`）と header の値は `presence.store`（既定は client
+ごとのメモリ）に持つ。
 
 ## オプション
 
@@ -87,6 +100,7 @@ await client.close(2_000);
 | `now` | `() => Date` | `() => new Date()` | `timestamp` と `sent_at` に使う時刻 |
 | `random` | `() => number` | `Math.random` | `sampleRate` の判定に使う乱数 |
 | `generateEventId` | `() => string` | `crypto.randomUUID` | `event_id` の生成 |
+| `presence` | `{ platform, store?, applySampleRate? }` | なし | 稼働確認。`applySampleRate` は配布物だけ `true` |
 
 `flush(timeoutMs)` と `close(timeoutMs)` の `timeoutMs` は既定 2,000 ミリ秒。
 

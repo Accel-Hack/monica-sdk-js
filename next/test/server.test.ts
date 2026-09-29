@@ -110,3 +110,56 @@ async function readEnvelope(request: Request | undefined): Promise<CapturedEnvel
   const stream = request.body.pipeThrough(new DecompressionStream("gzip"));
   return new Response(stream).json() as Promise<CapturedEnvelope>;
 }
+
+describe("稼働確認（client_report）", () => {
+  test("生成直後の flush() は送信中の start を待つ（waitUntil に載せれば応答後も切られない）", async () => {
+    let release: (() => void) | undefined;
+    let request: Request | undefined;
+    const client = createNextServerClient({
+      dsn: "https://msk_test@ingest.example.test/project-sample",
+      environment: "production",
+      fetch: async (input, init) => {
+        request = new Request(input, init);
+        await new Promise<void>((resolve) => (release = resolve));
+        return new Response(null, { status: 202 });
+      },
+    });
+    let flushed = false;
+    const flushing = client.flush().then((result) => {
+      flushed = true;
+      return result;
+    });
+    while (!release) await new Promise((resolve) => setTimeout(resolve, 1));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(flushed).toBe(false);
+    release();
+    expect((await flushing).accepted).toBe(true);
+    const envelope = (await readEnvelope(request)) as unknown as {
+      items: Array<{ type: string; trigger?: string }>;
+    };
+    expect(envelope.items).toMatchObject([{ type: "client_report", trigger: "start" }]);
+    await client.close();
+  });
+
+  test("next build の worker からは start を送らない", async () => {
+    const phase = process.env.NEXT_PHASE;
+    process.env.NEXT_PHASE = "phase-production-build";
+    try {
+      let requests = 0;
+      const client = createNextServerClient({
+        dsn: "https://msk_test@ingest.example.test/project-sample",
+        environment: "production",
+        fetch: async () => {
+          requests += 1;
+          return new Response(null, { status: 202 });
+        },
+      });
+      await client.flush();
+      expect(requests).toBe(0);
+      await client.close();
+    } finally {
+      if (phase === undefined) delete process.env.NEXT_PHASE;
+      else process.env.NEXT_PHASE = phase;
+    }
+  });
+});

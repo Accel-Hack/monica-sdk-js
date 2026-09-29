@@ -28,8 +28,10 @@ import {
 import {
   createCoreClient,
   createFetchTransport,
+  PRESENCE,
   type CaptureItemInput,
   type MonicaEnvelope,
+  type MonicaItem,
   type MonicaLevel,
   type MonicaTransport,
   type TransportDiagnostic,
@@ -140,7 +142,7 @@ describe("public contract: envelope schema", () => {
 
     expect(envelopes).toHaveLength(1);
     expect(validate(envelopes[0]), describeErrors(validate)).toBe(true);
-    const item = envelopes[0]?.items[0];
+    const item = envelopes[0]?.items[0] as MonicaItem | undefined;
     expect(item?.release).toBe("1.2.3");
     expect(item?.fingerprint).toEqual(["custom", "group"]);
   });
@@ -173,7 +175,7 @@ describe("public contract: envelope schema", () => {
     await client.capture({ type: "error", platform: "node", level: "error" });
     await client.flush();
 
-    const item = envelopes[0]?.items[0];
+    const item = envelopes[0]?.items[0] as MonicaItem | undefined;
     const pattern = new RegExp(errorItemProperty(schema, "event_id").pattern as string);
     expect(item?.event_id).toMatch(pattern);
     // payload.md: timestamp と sent_at は timezone 付きの RFC 3339。schema は string までしか
@@ -972,7 +974,7 @@ describe("public contract: 契約が禁じる空配列は adapter の外でも�
     await client.capture(fullItem());
     await client.flush();
 
-    const item = envelopes[0]!.items[0]!;
+    const item = envelopes[0]!.items[0] as MonicaItem;
     expect(item.fingerprint).toEqual(["custom", "group"]);
     expect((item.exception as { values: unknown[] }).values).toHaveLength(2);
   });
@@ -1313,7 +1315,7 @@ describe("public contract: transport.json の status ごとの挙動", () => {
 
     // 8 -> 4+4 -> 2+2+2+2。item は分かれず、順番も保たれる
     expect(delivered.map((sent) => sent.items.length)).toEqual([2, 2, 2, 2]);
-    expect(delivered.flatMap((sent) => sent.items.map((item) => item.message))).toEqual([
+    expect(delivered.flatMap((sent) => sent.items.map((item) => (item as MonicaItem).message))).toEqual([
       "0",
       "1",
       "2",
@@ -1482,4 +1484,59 @@ describe("public contract: transport.json の status ごとの挙動", () => {
       transportContract.retry.backoff.base_ms * transportContract.retry.backoff.jitter_min,
     );
   }, 10_000);
+});
+
+describe("public contract: client_report と稼働確認（transport.json の presence）", () => {
+  test("定数が transport.json の presence と一致する", () => {
+    const presence = transportContract.presence;
+    expect({ ...PRESENCE } as Record<string, unknown>).toEqual({
+      intervalMs: presence.interval_ms,
+      minIntervalMs: presence.min_interval_ms,
+      sampleRate: presence.sample_rate,
+      minSampleRate: presence.min_sample_rate,
+      intervalHeader: presence.override_headers.interval_ms,
+      sampleRateHeader: presence.override_headers.sample_rate,
+    });
+  });
+
+  test("client_report の envelope が schema を通る（release 有り・無し）", async () => {
+    for (const release of [undefined, "1.2.3"]) {
+      const envelopes: MonicaEnvelope[] = [];
+      const client = createCoreClient({
+        transport: recordingTransport(envelopes),
+        environment: "production",
+        release,
+        presence: { platform: "node" },
+      });
+      await client.checkPresence("start");
+      expect(envelopes).toHaveLength(1);
+      expect(envelopes[0]?.items).toHaveLength(1);
+      expect(validate(envelopes[0]), describeErrors(validate)).toBe(true);
+    }
+  });
+
+  test("202 の応答 header を読んで返し、header が無ければ欄を作らない", async () => {
+    const transport = createFetchTransport({
+      dsn: "https://msk_example@ingest.example.test/42",
+      fetch: async () =>
+        new Response(null, {
+          status: 202,
+          headers: {
+            [transportContract.presence.override_headers.interval_ms]: "3600000",
+            [transportContract.presence.override_headers.sample_rate]: "0.5",
+          },
+        }),
+    });
+    const envelope: MonicaEnvelope = {
+      sdk: { name: "@ah-monica/core", version: "0.0.0-test" },
+      sent_at: "2026-08-30T00:00:00.000Z",
+      discarded: 0,
+      items: [],
+    };
+    expect(await transport.send(envelope)).toEqual({
+      accepted: true,
+      status: 202,
+      presence: { intervalMs: "3600000", sampleRate: "0.5" },
+    });
+  });
 });

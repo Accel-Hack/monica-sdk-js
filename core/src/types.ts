@@ -66,11 +66,24 @@ export interface MonicaErrorItem {
 // invalid `{ type: "error" }` from satisfying a catch-all string branch.
 export type MonicaItem = MonicaErrorItem;
 
+/**
+ * 稼働確認（payload.md「client_report と稼働確認」）。capture や beforeSend は通らず、
+ * client が単独の envelope で送る。
+ */
+export interface MonicaClientReportItem {
+  type: "client_report";
+  timestamp: string;
+  platform: MonicaErrorItem["platform"];
+  environment: string;
+  trigger: "start" | "interval" | "stop";
+  release?: string;
+}
+
 export interface MonicaEnvelope {
   sdk: { name: string; version: string };
   sent_at: string;
   discarded: number;
-  items: MonicaItem[];
+  items: Array<MonicaItem | MonicaClientReportItem>;
 }
 
 export interface CaptureHint {
@@ -114,6 +127,36 @@ export interface TransportResult {
    * 鍵が失効した長寿命プロセスが永久に POST し続けるのを止めるための欄。
    */
   stop?: boolean;
+  /**
+   * 受理された応答の `X-Monica-Presence-Interval-Ms` / `X-Monica-Presence-Sample-Rate`
+   * を読んだままの文字列。header が無ければ欄ごと無い。値の検証と保存は client が行う。
+   */
+  presence?: { intervalMs?: string; sampleRate?: string };
+}
+
+/**
+ * 稼働確認の判定に使う状態。`intervalStartedAt` は interval を数え始めた時刻（epoch ms）。
+ * interval が過ぎたと判定したとき（抽選・送信の前）と `202` を受けたときに書く。
+ * `intervalMs` / `sampleRate` は `202` の応答 header で MONICA が上書きした値。
+ */
+export interface PresenceState {
+  intervalStartedAt?: number;
+  intervalMs?: number;
+  sampleRate?: number;
+}
+
+/** PresenceState の置き場所。既定は client ごとのメモリ。配布物は端末のストレージに差し替える */
+export interface PresenceStore {
+  load(): PresenceState | undefined;
+  save(state: PresenceState): void;
+}
+
+export interface PresenceOptions {
+  /** client_report の `platform`。error item に入れている値と同じにする */
+  platform: MonicaErrorItem["platform"];
+  store?: PresenceStore;
+  /** 配布物（browser など）だけ true。`sampleRate` の確率で間引く */
+  applySampleRate?: boolean;
 }
 
 /**
@@ -150,6 +193,11 @@ export interface CoreClientOptions {
   now?: () => Date;
   random?: () => number;
   generateEventId?: () => string;
+  /**
+   * 稼働確認を送る adapter が渡す。無ければ `checkPresence` は何も送らない。
+   * error の間引き（`sampleRate`）とは別物。
+   */
+  presence?: PresenceOptions;
 }
 
 export type CaptureItemInput = Omit<
@@ -191,4 +239,11 @@ export interface MonicaCoreClient {
   capture(input: CaptureItemInput, hint?: CaptureHint): Promise<string | null>;
   flush(timeoutMs?: number): Promise<FlushResult>;
   close(timeoutMs?: number): Promise<FlushResult>;
+  /**
+   * 直近の interval に `202` を受けていなければ、client_report を単独の envelope で送る。
+   * queue に error が溜まっている・送信中のときは送らない（そちらの `202` で足りる）。
+   * 送信は error と同じ経路（status ごとの挙動・discarded の勘定）を通る。
+   * 戻り値は次に判定すべきまでの ms。
+   */
+  checkPresence(trigger: "start" | "interval"): Promise<number>;
 }

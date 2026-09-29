@@ -6,6 +6,8 @@ import {
   type MonicaFrame,
   type MonicaRequest,
   type MonicaUser,
+  type PresenceState,
+  type PresenceStore,
 } from "@ah-monica/core";
 import { SDK_VERSION } from "./version.js";
 import type {
@@ -20,13 +22,14 @@ interface BrowserEventTarget {
 }
 
 export function createNextClient(options: NextClientOptions): MonicaNextClient {
-  if (options.dsn?.trim()) assertPublicDsn(options.dsn);
+  const publicKey = options.dsn?.trim() ? parsePublicKey(options.dsn) : undefined;
   assertPositiveInteger("maxBreadcrumbs", options.maxBreadcrumbs);
   const maxBreadcrumbs = positiveInteger(options.maxBreadcrumbs) ? options.maxBreadcrumbs : 50;
   const scope: {
     user?: MonicaUser;
     breadcrumbs: MonicaBreadcrumb[];
   } = { breadcrumbs: [] };
+  const inBrowser = typeof window !== "undefined";
   const core = createCoreClient({
     transport: createFetchTransport({
       dsn: options.dsn,
@@ -44,7 +47,19 @@ export function createNextClient(options: NextClientOptions): MonicaNextClient {
     flushIntervalMs: options.flushIntervalMs,
     beforeSend: options.beforeSend,
     sdk: { name: "@ah-monica/next", version: SDK_VERSION },
+    // SSR 中に作られた client と dsn の無い client は storage に触らず、稼働確認も送らない
+    ...(inBrowser && publicKey
+      ? {
+          presence: {
+            platform: "javascript",
+            store: browserPresenceStore(`monica.presence.${publicKey}`),
+            applySampleRate: true,
+          },
+        }
+      : {}),
   });
+  // ページ読み込み時の 1 回だけ判定する
+  void core.checkPresence("start");
   let removeGlobalHandlers: (() => void) | undefined;
 
   function contextValues(context: NextClientCaptureContext) {
@@ -185,6 +200,43 @@ export function createNextClient(options: NextClientOptions): MonicaNextClient {
 }
 
 /**
+ * interval を数え始めた時刻と、header で上書きされた interval / rate を端末に持つ。
+ * localStorage が使えなければ sessionStorage、どちらも無ければメモリ。
+ * key は project（API key）ごとに分ける。同じ origin で別 project の client を併用しても
+ * 互いの start を止めない。
+ */
+function browserPresenceStore(key: string): PresenceStore {
+  const storage = usableStorage("localStorage", key) ?? usableStorage("sessionStorage", key);
+  let memory: PresenceState | undefined;
+  return {
+    load() {
+      if (!storage) return memory;
+      const raw = storage.getItem(key);
+      return raw ? (JSON.parse(raw) as PresenceState) : undefined;
+    },
+    save(state) {
+      if (storage) storage.setItem(key, JSON.stringify(state));
+      else memory = state;
+    },
+  };
+}
+
+function usableStorage(
+  name: "localStorage" | "sessionStorage",
+  key: string,
+): Storage | undefined {
+  try {
+    // private mode や cookie 無効では、読むだけで throw するか setItem が throw する
+    const storage = (globalThis as Partial<Record<typeof name, Storage>>)[name];
+    if (!storage) return undefined;
+    storage.setItem(key, storage.getItem(key) ?? "");
+    return storage;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Tell an uncaught error from a subresource load failure. Both arrive as "error"
  * on window; only the uncaught error is an ErrorEvent.
  */
@@ -199,7 +251,8 @@ function isUncaughtErrorEvent(event: Event, target: unknown): boolean {
   return eventTarget === undefined || eventTarget === null || eventTarget === target;
 }
 
-function assertPublicDsn(dsn: string): void {
+/** dsn の API key を返す。public key（mpk_）でなければ throw する */
+function parsePublicKey(dsn: string): string {
   let key: string;
   try {
     key = decodeURIComponent(new URL(dsn).username);
@@ -209,6 +262,7 @@ function assertPublicDsn(dsn: string): void {
   if (!key.startsWith("mpk_")) {
     throw new TypeError("client dsn must contain a public mpk_ key; never expose an msk_ key");
   }
+  return key;
 }
 
 function cloneRequest(request: MonicaRequest): MonicaRequest {

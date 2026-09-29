@@ -107,6 +107,17 @@ uninstall();
 `flush()` の戻り値の `status` / `issues` / `error` / `stopped` からも取れる。
 詳しくは [TROUBLESHOOTING.md](../TROUBLESHOOTING.md)。
 
+## 稼働確認
+
+共通の仕組みは [ルートの README](../README.md#稼働確認) にある。
+
+- `createNodeClient()` を呼んだときに `trigger: "start"` を判定し、以後は interval の期限が来るたびに
+  `trigger: "interval"` を判定する。タイマーは `unref` した `setTimeout` 1 本で、プロセスの終了を妨げない
+- `close()` を呼ぶとタイマーが止まり、以後は送らない
+- 状態（interval を数え始めた時刻と header の値）はプロセスのメモリに持つ。再起動すると `start` を送り直し、
+  cluster や複数 instance ではプロセスごとに送る
+- プロセスが凍結される環境（AWS Lambda など）ではタイマーが発火しないことがあり、起動ごとの `start` だけになる
+
 ## ライセンス
 
 [Apache-2.0](LICENSE)

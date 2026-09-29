@@ -24,6 +24,9 @@ interface ScopeState {
   breadcrumbs: MonicaBreadcrumb[];
 }
 
+// setTimeout は 2^31-1 ms を超えると即座に発火する
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
 export function createNodeClient(options: NodeClientOptions): MonicaNodeClient {
   const maxBreadcrumbs = positiveInteger(options.maxBreadcrumbs) ? options.maxBreadcrumbs : 50;
   const storage = new AsyncLocalStorage<ScopeState>();
@@ -45,7 +48,31 @@ export function createNodeClient(options: NodeClientOptions): MonicaNodeClient {
     flushIntervalMs: options.flushIntervalMs,
     beforeSend: options.beforeSend,
     sdk: { name: "@ah-monica/node", version: SDK_VERSION },
+    presence: { platform: "node" },
   });
+
+  // core の flush timer は queue が空だと止まるので、稼働確認のタイマーは別に持つ。
+  // unref しているので、serverless では発火しないだけで害は無い
+  let presenceTimer: ReturnType<typeof setTimeout> | undefined;
+  let closed = false;
+  function schedulePresence(delayMs: number): void {
+    if (closed) return;
+    presenceTimer = setTimeout(() => {
+      void core.checkPresence("interval").then(schedulePresence);
+    }, Math.min(delayMs, MAX_TIMER_DELAY_MS));
+    const candidate = presenceTimer as unknown as { unref?: () => void };
+    candidate.unref?.();
+  }
+  // `next build` の worker は本番の稼働ではないので、そこからは start を送らない
+  if (process.env.NEXT_PHASE !== "phase-production-build") {
+    void core.checkPresence("start").then(schedulePresence);
+  }
+
+  function close(timeoutMs?: number) {
+    closed = true;
+    clearTimeout(presenceTimer);
+    return core.close(timeoutMs);
+  }
 
   function currentScope(): ScopeState {
     return storage.getStore() ?? globalScope;
@@ -203,7 +230,7 @@ export function createNodeClient(options: NodeClientOptions): MonicaNodeClient {
     addBreadcrumb,
     withScope,
     flush: core.flush,
-    close: core.close,
+    close,
     installProcessHooks,
   };
 }

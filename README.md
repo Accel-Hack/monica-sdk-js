@@ -127,6 +127,23 @@ URL と headers は収集しない。
 どの値が個人情報かは SDK では判定せず、自動除去もしない。送る値の選択と除去は
 アプリケーションの責任で、`beforeSend` がその最後の境界になる。
 
+## 稼働確認
+
+MONICA が SDK の稼働を知るために、SDK は `client_report` item 1 件だけの envelope を送る。
+載るのは `platform` / `environment` / `release` / `timestamp` と、送った契機の `trigger`
+（`start`: 起動・読み込み時、`interval`: 定期）だけ。送信先・認証・リトライ・`401` での停止は error と同じ。
+
+- 直近の interval（既定 1 日）に `202` を受けた envelope が無いときだけ送る。error の envelope の
+  `202` でも期限は延びる。queue に error が溜まっている間は送らず、その送信の結果を待つ
+- 間隔と間引き率（間引きは `@ah-monica/next/client` だけに効く）は MONICA 側の project 設定で決まる。SDK は `202` の応答 header
+  `X-Monica-Presence-Interval-Ms` / `X-Monica-Presence-Sample-Rate` を保存し、次の判定から使う。
+  header が無い・値が不正なら保存済みの値（既定は 1 日・間引かない）のまま
+- SDK 側の設定項目は無い。`sampleRate` と `beforeSend` は `client_report` に効かない。`dsn` が無い client は送らない
+
+いつ判定するか・状態をどこに持つかは package ごとに違う。
+[`node/`](node/README.md#稼働確認) / [`cloudflare/`](cloudflare/README.md#稼働確認) /
+[`next/`](next/README.md#稼働確認) の README を参照。
+
 ## 送信結果と診断
 
 ingest が envelope を拒否すると、既定で `console.warn` に 1 行出る。出るのは `422`
@@ -144,7 +161,7 @@ ingest が envelope を拒否すると、既定で `console.warn` に 1 行出�
   クライアントに配る配信物には public key（`mpk_...`）だけを置く。
 - envelope 1 件の上限は gzip 後 1 MiB、item 100 件、stacktrace 200 frame。
   SDK は送信前に JSON を 1,000,000 byte 未満に抑え、単体で超える item は破棄する。
-- 送信できる item は `type: "error"` のみ。
+- アプリケーションから送れる item は `type: "error"` のみ。
 - ESM のみ。CommonJS の `require()` では読み込めない。
 - Next.js の Edge runtime は対象外。
 

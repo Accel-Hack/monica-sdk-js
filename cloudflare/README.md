@@ -44,7 +44,7 @@ function createClient(env: Env) {
 ブラウザ側の SDK にも同じ値を渡すと、Worker とブラウザの event が同じ release に揃う。
 
 DSN を Secrets Store に置く場合、binding の値は `get()` で非同期に読むので、client は
-`catch` の中で作る（[制約](#制約) のとおり request ごとに作ってよい）。`get()` は secret が
+request の入口で作る（[制約](#制約) のとおり request ごとに作ってよい）。`get()` は secret が
 無いと例外を投げるので、`undefined` に落として何も送らない client にする。
 
 ```ts
@@ -56,14 +56,15 @@ interface Env {
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const monica = createCloudflareClient({
+      dsn: await env.MONICA_DSN.get().catch(() => undefined),
+      environment: env.MONICA_ENVIRONMENT,
+      release: env.MONICA_RELEASE,
+    });
+    ctx.waitUntil(monica.flush());
     try {
       return await handleRequest(request, env);
     } catch (error) {
-      const monica = createCloudflareClient({
-        dsn: await env.MONICA_DSN.get().catch(() => undefined),
-        environment: env.MONICA_ENVIRONMENT,
-        release: env.MONICA_RELEASE,
-      });
       monica.captureExceptionInBackground(ctx, error);
       return new Response("Internal Server Error", { status: 500 });
     }
@@ -73,6 +74,8 @@ export default {
 
 ## 使い方
 
+request の入口で client を作り、`ctx.waitUntil(monica.flush())` を呼ぶ（[稼働確認](#稼働確認)）。
+
 `captureException()` は capture と flush の両方を終えてから解決する Promise を返す。
 handler の応答を待たせたくない場合は `captureExceptionInBackground(ctx, ...)` で
 `ExecutionContext.waitUntil()` に載せる。
@@ -80,10 +83,12 @@ handler の応答を待たせたくない場合は `captureExceptionInBackground
 ```ts
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const monica = createClient(env);
+    ctx.waitUntil(monica.flush());
     try {
       return await handleRequest(request, env);
     } catch (error) {
-      createClient(env).captureExceptionInBackground(ctx, error, {
+      monica.captureExceptionInBackground(ctx, error, {
         tags: { operation: "handle-request" },
         // URL の path にも個人情報が入り得るので、安全と判断した値だけを渡す。
         request: { method: request.method, url: new URL(request.url).origin },
@@ -107,6 +112,16 @@ await monica.captureException(error, { tags: { trigger: "scheduled" } });
 
 Worker の外側で起きた未捕捉例外まで集めたい場合は Tail Worker も検討する。この adapter は、
 アプリケーションが捕捉して業務上の文脈を選んで送る例外を対象にする。
+
+## 稼働確認
+
+共通の仕組みは [ルートの README](../README.md#稼働確認) にある。
+
+- isolate で最初の `flush()` / `captureException()` / `captureMessage()` の呼び出しが
+  `trigger: "start"` を 1 通送る。client を作っただけでは送らない。`dsn` と `environment` の組ごとに数える
+- request の入口で `ctx.waitUntil(monica.flush())` を呼ぶ。`waitUntil` が無いと handler の終了で送信が打ち切られる
+- Workers にはタイマーが無いので `trigger: "interval"` は送らない。isolate が作り直されるたびに `start` を送る
+- 状態は isolate のメモリに持ち、ストレージには書かない
 
 ## オプション
 

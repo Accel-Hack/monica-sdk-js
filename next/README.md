@@ -89,11 +89,25 @@ export const monica = createNextServerClient({
 });
 ```
 
+Next.js は `instrumentation.ts` を Edge runtime 向けにも bundle するので、server client は
+`NEXT_RUNTIME === "nodejs"` の分岐の中で dynamic import する。`register()` で読み込むと、
+稼働確認の `start` は起動時に送られる。
+
 ```ts
 // instrumentation.ts
-import { monica } from "./src/infrastructure/monica.server";
+import type { Instrumentation } from "next";
 
-export const onRequestError = monica.onRequestError;
+export async function register() {
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    await import("./src/infrastructure/monica.server");
+  }
+}
+
+export const onRequestError: Instrumentation.onRequestError = async (...args) => {
+  if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  const { monica } = await import("./src/infrastructure/monica.server");
+  await monica.onRequestError(...args);
+};
 ```
 
 `onRequestError` は送信完了まで await する。Next.js から渡される URL と headers は
@@ -104,6 +118,25 @@ tag には `next.router_kind` と `next.route_type` が付く。
 Server Action や Route Handler では `monica.captureException(error)` を直接呼べる。
 server client は [`@ah-monica/node`](../node/README.md) のクライアントと同じ API
 （`withScope`、`installProcessHooks` など）を持つ。
+
+### Cloudflare（OpenNext）で使う場合
+
+Workers は応答を返したあとの送信を待たず、タイマーも発火しない。`register()` で client を
+作り、`start` の送信を `waitUntil` に載せる。定期の `interval` は送られず、isolate ごとの `start` だけになる。
+OpenNext は `register()` を最初の request の中で呼ぶので、global scope で fetch できない制約にも当たらない。
+
+```ts
+// instrumentation.ts
+export async function register() {
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    const { monica } = await import("./src/infrastructure/monica.server");
+    const { getCloudflareContext } = await import("@opennextjs/cloudflare");
+    getCloudflareContext().ctx.waitUntil(monica.flush());
+  }
+}
+
+// onRequestError は上の例と同じ
+```
 
 ## オプション
 
@@ -124,6 +157,24 @@ client / server とも同じ option を取る（server は `@ah-monica/node` と
 | `onDiagnostic` | `(diagnostic) => void \| null` | `console.warn` に 1 行 | 拒否されたときの診断の受け取り先。`null` で無効 |
 | `beforeSend` | `(item, hint) => item \| null \| Promise<...>` | なし | `null` を返すと破棄 |
 | `fetch` | `typeof fetch` | `globalThis.fetch` | 送信に使う fetch |
+
+## 稼働確認
+
+共通の仕組みは [ルートの README](../README.md#稼働確認) にある。
+
+Client:
+
+- ブラウザで `createNextClient()` を評価したとき（ページ読み込み時）に 1 回だけ `trigger: "start"` を判定する。
+  ページを開いたままでも定期送信はしない。SSR 中に作られた client は送らず、storage にも触らない
+- 状態（interval を数え始めた時刻と header の値）は `localStorage` の `monica.presence.<public key>` に JSON で持つ。
+  `localStorage` が使えなければ `sessionStorage`（タブごと）、どちらも使えなければメモリ（読み込みごとに判定し直す）
+- `X-Monica-Presence-Sample-Rate` の率で端末ごとに間引く。外れた端末もその interval の間は抽選し直さない
+
+Server:
+
+- [`@ah-monica/node`](../node/README.md#稼働確認) と同じ（プロセスのメモリに状態を持ち、`unref` したタイマーで判定する）
+- `next build` の間（`NEXT_PHASE=phase-production-build`）は送らない
+- Cloudflare（OpenNext）では [上の例](#cloudflareopennextで使う場合) のとおり `waitUntil(monica.flush())` を呼ぶ
 
 ## 送信結果と診断
 
