@@ -127,6 +127,26 @@ URL と headers は収集しない。
 どの値が個人情報かは SDK では判定せず、自動除去もしない。送る値の選択と除去は
 アプリケーションの責任で、`beforeSend` がその最後の境界になる。
 
+## Issue のまとめ方
+
+どのエラーを同じ Issue にまとめるかは MONICA 側で決まり、SDK は決めない。規則は
+[`spec/v1/grouping.md`](spec/v1/grouping.md) にある。分かれ方が意外なときは、管理画面の
+Issue 詳細の「まとめ方」で、その Issue がどの値でまとめられたかを確かめる。
+
+この SDK に固有の点は次のとおり。
+
+- `@ah-monica/node` と `@ah-monica/next/server` は `platform: "node"` で送り、frame の
+  関数名は V8 の stack 文字列から取る。server のコードを bundle・minify すると関数名が
+  build ごとに変わり、同じエラーが build ごとに別の Issue になることがある
+- `@ah-monica/cloudflare` と `@ah-monica/next/client` は `platform: "javascript"` で送るので、
+  MONICA は関数名を見ずにファイルだけを見る。同じ bundle の中で起きた同じ型のエラーは
+  1 つの Issue になりやすい
+- `node_modules` の下の frame は `in_app: false` になる。`@ah-monica/next/client` 以外は
+  `node:` で始まる frame も `in_app: false` になる
+- 分けたいときは、発生した場所で専用の Error のサブクラスを投げる。catch の中で
+  `new Error()` を作り直さず、元の error を送るか `cause` に入れて包む。`fingerprint` は
+  既定の分け方を置き換えるので、どこで起きたかの区別も値に含める
+
 ## 稼働確認
 
 MONICA が SDK の稼働を知るために、SDK は `client_report` item 1 件だけの envelope を送る。
