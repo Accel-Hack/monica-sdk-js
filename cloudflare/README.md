@@ -152,6 +152,10 @@ Worker の外側で起きた未捕捉例外まで集めたい場合は Tail Work
   送信は途中で打ち切られる。
 - client は request ごとに作ってよい。`401` で止まるのはその client だけなので、
   鍵が失効しても次の request で再び 1 回 POST する。
+- error と稼働確認は `platform: "cloudflare"` で送る。MONICA は frame の関数名で Issue を分けるので、
+  wrangler の `minify` を有効にすると関数名が build ごとに変わり、同じエラーが deploy のたびに別の Issue になる。
+- 以前の版は `platform: "javascript"` で送っていた。この版に上げると稼働記録のキーが変わるので、
+  2 日後に古い platform の「SDK が沈黙している」Issue が 1 度開く。閉じてよい。
 
 ## ライセンス
 

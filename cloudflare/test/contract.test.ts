@@ -60,7 +60,7 @@ describe("public contract: @ah-monica/cloudflare", () => {
       expect(item, `item is missing ${required}`).toHaveProperty(required);
     }
     expect(enumOf(errorItemProperty(schema, "platform"))).toContain(item.platform as string);
-    expect(item.platform).toBe("javascript");
+    expect(item.platform).toBe("cloudflare");
     const values = (item.exception as { values: Array<{ type: string }> }).values;
     expect(values.map((value) => value.type)).toEqual(["Error", "RangeError"]);
   });

@@ -47,7 +47,7 @@ export interface MonicaErrorItem {
   event_id: string;
   timestamp: string;
   level: MonicaLevel;
-  platform: "javascript" | "node" | "java" | "php";
+  platform: "javascript" | "node" | "cloudflare" | "java" | "php";
   environment: string;
   release?: string;
   server_name?: string;

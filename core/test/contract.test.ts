@@ -191,7 +191,7 @@ describe("public contract: envelope schema", () => {
     for (const level of levels) expect(levelEnum).toContain(level);
 
     const platformEnum = enumOf(errorItemProperty(schema, "platform"));
-    for (const platform of ["javascript", "node", "java", "php"]) {
+    for (const platform of ["javascript", "node", "cloudflare", "java", "php"]) {
       expect(platformEnum).toContain(platform);
     }
 
