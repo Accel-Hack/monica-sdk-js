@@ -154,8 +154,11 @@ Worker の外側で起きた未捕捉例外まで集めたい場合は Tail Work
   鍵が失効しても次の request で再び 1 回 POST する。
 - error と稼働確認は `platform: "cloudflare"` で送る。MONICA は frame の関数名で Issue を分けるので、
   wrangler の `minify` を有効にすると関数名が build ごとに変わり、同じエラーが deploy のたびに別の Issue になる。
-- 以前の版は `platform: "javascript"` で送っていた。この版に上げると稼働記録のキーが変わるので、
-  2 日後に古い platform の「SDK が沈黙している」Issue が 1 度開く。閉じてよい。
+- 以前の版は `platform: "javascript"` で送っていた。この版に上げると次の 2 つが起きる。
+  - frame に関数名が付くので、繰り返し起きているエラーも新しい Issue として開き直し、新規 Issue の通知が届く。
+  - 稼働記録のキーが変わるので、2 日後に古い platform の「SDK が沈黙している」Issue が 1 度開く。閉じてよい。
+- source map が無いと、依存のコードも同じ bundle のファイルに入り、依存の関数名も Issue の分け方に使われる。
+  依存を上げると、同じエラーが別の Issue になることがある。
 
 ## ライセンス
 
