@@ -138,9 +138,11 @@ Issue 詳細の「まとめ方」で、その Issue がどの値でまとめら�
 - `@ah-monica/node` と `@ah-monica/next/server` は `platform: "node"` で送り、frame の
   関数名は V8 の stack 文字列から取る。server のコードを bundle・minify すると関数名が
   build ごとに変わり、同じエラーが build ごとに別の Issue になることがある
-- `@ah-monica/cloudflare` と `@ah-monica/next/client` は `platform: "javascript"` で送るので、
-  MONICA は関数名を見ずにファイルだけを見る。同じ bundle の中で起きた同じ型のエラーは
-  1 つの Issue になりやすい
+- `@ah-monica/cloudflare` は `platform: "cloudflare"` で送り、MONICA は node と同じく関数名を見る。
+  wrangler の `minify` を有効にすると関数名が build ごとに変わる。source map が無いと依存のコードも
+  同じ bundle に入るので、依存の関数名も分け方に使われる（[`cloudflare/README.md`](cloudflare/README.md#制約)）
+- `@ah-monica/next/client` は `platform: "javascript"` で送るので、MONICA は関数名を見ずに
+  ファイルだけを見る。同じ bundle の中で起きた同じ型のエラーは 1 つの Issue になりやすい
 - `node_modules` の下の frame は `in_app: false` になる。`@ah-monica/next/client` 以外は
   `node:` で始まる frame も `in_app: false` になる
 - 分けたいときは、発生した場所で専用の Error のサブクラスを投げる。catch の中で
