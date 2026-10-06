@@ -55,7 +55,7 @@ describe("createCloudflareClient", () => {
       version: packageMetadata.version,
     });
     expect(envelope.items[0]).toMatchObject({
-      platform: "javascript",
+      platform: "cloudflare",
       environment: "production",
       release: "worker-version-id",
       message: "worker failed",
@@ -228,7 +228,7 @@ describe("稼働確認（client_report）", () => {
     expect(items[0]).toEqual({
       type: "client_report",
       timestamp: expect.any(String),
-      platform: "javascript",
+      platform: "cloudflare",
       environment: "production",
       trigger: "start",
       release: "worker-version-id",

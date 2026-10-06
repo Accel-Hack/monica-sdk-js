@@ -48,7 +48,7 @@ export function createCloudflareClient(
     sampleRate: options.sampleRate,
     beforeSend: options.beforeSend,
     sdk: { name: "@ah-monica/cloudflare", version: SDK_VERSION },
-    presence: { platform: "javascript" },
+    presence: { platform: "cloudflare" },
   });
 
   /**
@@ -92,7 +92,7 @@ export function createCloudflareClient(
       return await captureAndFlush(
         {
           type: "error",
-          platform: "javascript",
+          platform: "cloudflare",
           level: context.level ?? "error",
           message: exception.values[0]?.value,
           exception,
@@ -113,7 +113,7 @@ export function createCloudflareClient(
     try {
       return await captureAndFlush({
         type: "error",
-        platform: "javascript",
+        platform: "cloudflare",
         level,
         message,
         ...contextValues(context),
