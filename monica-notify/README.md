@@ -29,7 +29,7 @@ GitHub Actions の job が失敗したとき、失敗した job 1 件につき 1
 
 - conclusion が `failure` か `timed_out` の job 1 件につき 1 event を送ります。cancelled の job は送りません。
 - 本文は失敗した step のログ末尾 100 行です (64 KiB 上限)。タイムスタンプと ANSI エスケープは取り除きます。失敗した step が分からないときは job ログ全体の末尾を送ります。
-- Issue のタイトルは `<repo> <workflow> / <job> (<PR 番号か branch>): <失敗した step> <job の URL>` です。
+- Issue のタイトルは `JobFailed: <repo> / <job>` です。job の URL・workflow 名・branch (PR 番号)・失敗した step は、Issue 詳細のログの先頭に出ます。branch ごとに Issue は分かれますが、タイトルは同じになるので、environment (`ci` / `ci-pr`) と詳細で見分けます。
 - environment は default branch への push や schedule なら `ci`、PR とそれ以外の branch なら `ci-pr` です。release は commit SHA です。
 - fingerprint は repo・workflow path・job 名・branch です。同じ branch で同じ job が失敗し続けると、1 つの Issue にまとまります。
 - event_id は job id から決めています。notify job を再実行しても MONICA は同じ event を二重に数えません。
