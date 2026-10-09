@@ -1,0 +1,42 @@
+name: monica-notify 動作確認
+
+# monica-notify が本物の MONICA へ送れるかを手で確かめる。fail job をわざと落とし、
+# notify-monica job がその失敗を送る。environment ci の secret MONICA_CI_DSN を使う。
+# この workflow を変える PR でも動くので、PR を作るだけでも確かめられる。
+# MONICA に送る environment は、default branch で実行すると ci、ほかの branch では ci-pr になる。
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: [".github/workflows/monica-notify-check.yml"]
+
+permissions: {}
+
+jobs:
+  fail:
+    name: fail
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          echo "monica-notify の動作確認"
+          exit 1
+
+  notify-monica:
+    name: notify-monica
+    needs: [fail]
+    if: failure()
+    environment: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # 呼び出し側の例は actions: read だけ。ここは自分の action を checkout するので contents: read も要る
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: monica-notify
+      - uses: ./monica-notify
+        with:
+          dsn: ${{ secrets.MONICA_CI_DSN }}

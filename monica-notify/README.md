@@ -21,7 +21,7 @@ GitHub Actions の job が失敗したとき、失敗した job 1 件につき 1
 
 - `uses` には monica-sdk-js の commit SHA を書きます。例の SHA は書いた時点のものなので、使うときは main の最新の commit SHA に置き換えます。branch の名前で書くと、monica-sdk-js 側の変更がそのまま呼び出し元の CI で動きます。
 - job の `permissions` は `actions: read` だけにします。script は job の token をそのまま使うので、書かないと repository の既定の権限 (write のこともあります) が渡ります。
-- secret は org で共通にせず、呼び出す repository ごとに作ります。その repository の secret `MONICA_CI_DSN` に、MONICA の secret key (`msk_`) の DSN を入れておきます。
+- secret は org で共通にせず、呼び出す repository ごとに作ります。その repository の secret `MONICA_CI_DSN` に、MONICA の secret key (`msk_`) の DSN を入れておきます。GitHub の environment の secret に置く場合は、notify job に `environment: <名前>` を書きます。
 - `needs` に書き忘れた job は拾えません。その job だけが失敗したときは `failure()` が偽になり、notify job が動きません。
 - `on: workflow_run` で起動した workflow から呼ぶと、起動元の run の失敗を送ります。
 
@@ -85,3 +85,5 @@ npm test
 ```
 
 `build.mjs` は I/O を持たない純粋な関数で、`index.mjs` が環境変数・GitHub API・MONICA への送信を受け持ちます。
+
+本物の MONICA へ送れるかは、Actions の「monica-notify 動作確認」を Run workflow で実行して確かめます。fail job がわざと失敗し、notify-monica job がその失敗を送ります。GitHub の environment `ci` にある secret `MONICA_CI_DSN` を使います。
