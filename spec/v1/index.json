@@ -1,7 +1,7 @@
 {
   "version": "v1",
   "base": "https://spec.monica.accelhack.net/v1/",
-  "revision": "f500b2008b0afe17da1f334bbeffbf6532a309c4cb92a41ca8d1eb637db0fd7a",
+  "revision": "5f3666ad23cf4ac38d828a615be473daa5f4cee00e0acfb4fe2fc91205d3d7e3",
   "files": [
     {
       "path": "README.md",
@@ -17,7 +17,7 @@
     },
     {
       "path": "grouping.md",
-      "sha256": "12fe1be12844f47a56866b4caf4db850980941488839f88a502b4323cff09ee5"
+      "sha256": "6e92204c59eb003fe25b46faee2854bbfc81d8417f63d7ecd6f8fd8af4ccc3e8"
     },
     {
       "path": "ingest.md",
@@ -29,7 +29,7 @@
     },
     {
       "path": "payload.md",
-      "sha256": "ec2a6ad50982f8fe72a6aacb30d1617416293d83a11bb61bb469a07601f5d0d5"
+      "sha256": "445a352a07045e414d57174a035540437feef51b24c665bc361fba1370591d5d"
     },
     {
       "path": "transport.json",

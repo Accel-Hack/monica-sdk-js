@@ -1,0 +1,17 @@
+name: Notify MONICA
+description: 失敗した GitHub Actions の job ごとに、失敗した step のログ末尾を MONICA へ送る
+
+inputs:
+  dsn:
+    description: MONICA の secret key (msk_) の DSN。空なら何も送らない
+    required: false
+
+runs:
+  using: composite
+  steps:
+    # GITHUB_ACTION_PATH は呼び出し側が uses に書いた SHA の checkout なので、script もその SHA に固定される
+    - shell: bash
+      run: npm ci --prefix "$GITHUB_ACTION_PATH" && node "$GITHUB_ACTION_PATH/index.mjs"
+      env:
+        MONICA_DSN: ${{ inputs.dsn }}
+        GITHUB_TOKEN: ${{ github.token }}
