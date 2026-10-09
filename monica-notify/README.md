@@ -14,12 +14,12 @@ GitHub Actions の job が失敗したとき、失敗した job 1 件につき 1
     permissions:
       actions: read
     steps:
-      - uses: Accel-Hack/monica-sdk-js/monica-notify@<commit SHA> # vX.Y.Z
+      - uses: Accel-Hack/monica-sdk-js/monica-notify@e58e1e7b438a8c93fe5e4ed1790d37c104ed1759
         with:
           dsn: ${{ secrets.MONICA_CI_DSN }}
 ```
 
-- `uses` には monica-sdk-js の commit SHA を書きます。branch や tag の名前で書くと、monica-sdk-js 側の変更がそのまま呼び出し元の CI で動きます。release tag (`vX.Y.Z`) の commit を使い、コメントに tag 名を書いておきます。
+- `uses` には monica-sdk-js の commit SHA を書きます。例の SHA は書いた時点のものなので、使うときは main の最新の commit SHA に置き換えます。branch の名前で書くと、monica-sdk-js 側の変更がそのまま呼び出し元の CI で動きます。
 - job の `permissions` は `actions: read` だけにします。script は job の token をそのまま使うので、書かないと repository の既定の権限 (write のこともあります) が渡ります。
 - secret は org で共通にせず、呼び出す repository ごとに作ります。その repository の secret `MONICA_CI_DSN` に、MONICA の secret key (`msk_`) の DSN を入れておきます。
 - `needs` に書き忘れた job は拾えません。その job だけが失敗したときは `failure()` が偽になり、notify job が動きません。
@@ -43,7 +43,7 @@ CI 専用の secret key を発行し、その key の無受信検知を off に�
 
 ### アラートルールの例
 
-MONICA はルールが無いと通知しません。どう通知したいかに合わせて、次の例から選んでアラートルールを作ります。項目名は管理画面の表記です。
+プロジェクトに新規 Issue を通知するルール (既定で入っている `Slack: new errors` など) があれば、CI の失敗も新規 Issue として通知されます。CI の event の level は `error` です。それ以外の通知のされ方にしたいときは、次の例から選んでアラートルールを作ります。項目名は管理画面の表記です。
 
 | 運用 | 発火条件 | 設定 | 通知のされ方 |
 | --- | --- | --- | --- |
@@ -63,6 +63,7 @@ MONICA はルールが無いと通知しません。どう通知したいかに�
 
 ### 補足
 
+- 環境を絞っていない新規 Issue のルールが既にあると、上の例のルールと合わせて、同じ失敗で 2 回通知が届くことがあります。既存のルールの環境をアプリのものに絞れば、CI の通知は上の例のルールだけになります。
 - 閾値ルールの Recovered は「集計時間の間に失敗が無かった」という意味です。job が直ったことは表しません。
 - 同じ通知を抑制する時間は、集計時間以下にします。長くすると、Recovered の後に来た次の通知が抑制されることがあります。
 - 1 つのプロジェクトで複数の repository を受けるなら、tagフィルターに `gha.repository` を指定すると、repository ごとに通知先を分けられます。
