@@ -21,7 +21,7 @@ GitHub Actions の job が失敗したとき、失敗した job 1 件につき 1
 
 - `uses` には monica-sdk-js の commit SHA を書きます。例の SHA は書いた時点のものなので、使うときは main の最新の commit SHA に置き換えます。branch の名前で書くと、monica-sdk-js 側の変更がそのまま呼び出し元の CI で動きます。
 - job の `permissions` は `actions: read` だけにします。script は job の token をそのまま使うので、書かないと repository の既定の権限 (write のこともあります) が渡ります。
-- secret は org で共通にせず、呼び出す repository ごとに作ります。その repository の secret `MONICA_CI_DSN` に、MONICA の secret key (`msk_`) の DSN を入れておきます。GitHub の environment の secret に置く場合は、notify job に `environment: <名前>` を書きます。
+- secret は org で共通にせず、呼び出す repository ごとに作ります。その repository の secret `MONICA_CI_DSN` に、MONICA の secret key (`msk_`) の DSN を入れておきます。
 - `needs` に書き忘れた job は拾えません。その job だけが失敗したときは `failure()` が偽になり、notify job が動きません。
 - `on: workflow_run` で起動した workflow から呼ぶと、起動元の run の失敗を送ります。
 
@@ -29,7 +29,7 @@ GitHub Actions の job が失敗したとき、失敗した job 1 件につき 1
 
 - conclusion が `failure` か `timed_out` の job 1 件につき 1 event を送ります。cancelled の job は送りません。
 - 本文は失敗した step のログ末尾 100 行です (64 KiB 上限)。タイムスタンプと ANSI エスケープは取り除きます。失敗した step が分からないときは job ログ全体の末尾を送ります。
-- Issue のタイトルは `JobFailed: <repo> / <job>` です。job の URL・workflow 名・branch (PR 番号)・失敗した step は、Issue 詳細のログの先頭に出ます。branch ごとに Issue は分かれますが、タイトルは同じになるので、environment (`ci` / `ci-pr`) と詳細で見分けます。
+- Issue のタイトルは `JobFailed: <repo> / <job> <job の URL>` です。workflow 名・branch (PR 番号)・失敗した step は、Issue 詳細のログの先頭に出ます。branch ごとに Issue は分かれますが、タイトルは同じになるので、environment (`ci` / `ci-pr`) と詳細で見分けます。
 - environment は default branch への push や schedule なら `ci`、PR とそれ以外の branch なら `ci-pr` です。release は commit SHA です。
 - fingerprint は repo・workflow path・job 名・branch です。同じ branch で同じ job が失敗し続けると、1 つの Issue にまとまります。
 - event_id は job id から決めています。notify job を再実行しても MONICA は同じ event を二重に数えません。
@@ -85,5 +85,3 @@ npm test
 ```
 
 `build.mjs` は I/O を持たない純粋な関数で、`index.mjs` が環境変数・GitHub API・MONICA への送信を受け持ちます。
-
-本物の MONICA へ送れるかは、Actions の「monica-notify 動作確認」を Run workflow で実行して確かめます。fail job がわざと失敗し、notify-monica job がその失敗を送ります。GitHub の environment `ci` にある secret `MONICA_CI_DSN` を使います。

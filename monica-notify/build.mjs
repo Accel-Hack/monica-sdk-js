@@ -42,7 +42,6 @@ export function buildItem({ repo, run, job, log }) {
   const pr = run.pull_requests?.[0]?.number;
   const branch = run.head_branch ?? "";
   const header = [
-    job.html_url,
     `workflow: ${run.name}`,
     `branch: ${branch}${pr ? ` (#${pr})` : ""}`,
     ...(step ? [`step: ${step.name}`] : []),
@@ -56,7 +55,7 @@ export function buildItem({ repo, run, job, log }) {
       // MONICA titles the issue from the last value and renders each value in a <pre>, so the title goes last.
       values: [
         { type: "Log", value: `${header}\n\n${log ?? "(log unavailable)"}` },
-        { type: "JobFailed", value: `${repo} / ${job.name}` },
+        { type: "JobFailed", value: `${repo} / ${job.name} ${job.html_url}` },
       ],
     },
     tags: {
