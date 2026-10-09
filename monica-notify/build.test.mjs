@@ -94,8 +94,18 @@ test("buildItem puts the log first and the title last", () => {
     platform: "node",
     exception: {
       values: [
-        { type: "Log", value: "https://github.com/o/r/actions/runs/1/job/42\n\na\nb" },
-        { type: "JobFailed", value: "o/r CI / test (#7): npm test https://github.com/o/r/actions/runs/1/job/42" },
+        {
+          type: "Log",
+          value: [
+            "workflow: CI",
+            "branch: fix-x (#7)",
+            "step: npm test",
+            "",
+            "a",
+            "b",
+          ].join("\n"),
+        },
+        { type: "JobFailed", value: "[o/r] test https://github.com/o/r/actions/runs/1/job/42" },
       ],
     },
     tags: {
@@ -113,8 +123,11 @@ test("buildItem puts the log first and the title last", () => {
 test("buildItem without a PR, failed step, or log names the branch and omits the PR tag", () => {
   const run = { ...RUN, event: "push", head_branch: "main", pull_requests: [] };
   const item = buildItem({ repo: "o/r", run, job: { ...JOB, steps: undefined }, log: null });
-  assert.equal(item.exception.values.at(-1).value, "o/r CI / test (main) https://github.com/o/r/actions/runs/1/job/42");
-  assert.equal(item.exception.values[0].value, "https://github.com/o/r/actions/runs/1/job/42\n\n(log unavailable)");
+  assert.equal(item.exception.values.at(-1).value, "[o/r] test https://github.com/o/r/actions/runs/1/job/42");
+  assert.equal(
+    item.exception.values[0].value,
+    "workflow: CI\nbranch: main\n\n(log unavailable)",
+  );
   assert.ok(!("gha.pull_request" in item.tags));
   assert.equal(item.fingerprint.at(-1), "main");
 });
