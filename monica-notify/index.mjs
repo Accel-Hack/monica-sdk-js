@@ -49,6 +49,12 @@ async function jobLog(jobId) {
 }
 
 const run = await gh(`/actions/runs/${runId}`);
+// Via workflow_run a fork's run reaches this script with the base repository's secrets, and its job
+// names and logs are attacker-controlled.
+if (run.head_repository?.full_name !== repo) {
+  console.log("::notice::run from a fork; nothing was sent to MONICA");
+  process.exit(0);
+}
 const { default_branch } = await gh("");
 const jobs = [];
 for (let page = 1; ; page++) {

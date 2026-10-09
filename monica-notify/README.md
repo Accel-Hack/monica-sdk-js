@@ -69,7 +69,7 @@ MONICA はルールが無いと通知しません。どう通知したいかに�
 ## 制約
 
 - script は常に `main` から取得します。main への merge は全 repo に即時に効きます。ほかの package と違い、tag での release も npm への公開もしません。
-- fork からの PR には secret が渡らないので、何も送りません。warning を出して成功で終わります。
+- fork からの run は送りません。fork の PR から直接呼ばれたときは secret が渡らないので、warning を出して成功で終わります。`on: workflow_run` 経由では secret が渡りますが、run の head repository が呼び出し元と違えば notice を出して成功で終わります。job 名やログは fork 側が自由に書けるためです。
 - MONICA が受け取らなかったとき (4xx、リトライ後の 5xx、30 秒のタイムアウト) は notify job が失敗します。
 
 ## 開発
