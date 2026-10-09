@@ -1,6 +1,6 @@
 # monica-notify
 
-GitHub Actions の job が失敗したとき、失敗した job 1 件につき 1 件のエラーを MONICA に送る reusable workflow です。
+GitHub Actions の job が失敗したとき、失敗した job 1 件につき 1 件のエラーを MONICA に送る composite action です。
 
 ## 呼び出し方
 
@@ -10,14 +10,17 @@ GitHub Actions の job が失敗したとき、失敗した job 1 件につき 1
   notify-monica:
     needs: [build, test]   # 監視したい job をすべて並べる
     if: failure()
+    runs-on: ubuntu-latest
     permissions:
       actions: read
-      contents: read
-    uses: Accel-Hack/monica-sdk-js/.github/workflows/monica-notify.yml@main
-    secrets:
-      MONICA_CI_DSN: ${{ secrets.MONICA_CI_DSN }}
+    steps:
+      - uses: Accel-Hack/monica-sdk-js/monica-notify@<commit SHA> # vX.Y.Z
+        with:
+          dsn: ${{ secrets.MONICA_CI_DSN }}
 ```
 
+- `uses` には monica-sdk-js の commit SHA を書きます。branch や tag の名前で書くと、monica-sdk-js 側の変更がそのまま呼び出し元の CI で動きます。release tag (`vX.Y.Z`) の commit を使い、コメントに tag 名を書いておきます。
+- job の `permissions` は `actions: read` だけにします。script は job の token をそのまま使うので、書かないと repository の既定の権限 (write のこともあります) が渡ります。
 - secret は org で共通にせず、呼び出す repository ごとに作ります。その repository の secret `MONICA_CI_DSN` に、MONICA の secret key (`msk_`) の DSN を入れておきます。
 - `needs` に書き忘れた job は拾えません。その job だけが失敗したときは `failure()` が偽になり、notify job が動きません。
 - `on: workflow_run` で起動した workflow から呼ぶと、起動元の run の失敗を送ります。
@@ -68,7 +71,7 @@ MONICA はルールが無いと通知しません。どう通知したいかに�
 
 ## 制約
 
-- script は常に `main` から取得します。main への merge は全 repo に即時に効きます。ほかの package と違い、tag での release も npm への公開もしません。
+- npm には公開しません。動くのは、呼び出し側が `uses` に書いた commit の script です。
 - fork からの run は送りません。fork の PR から直接呼ばれたときは secret が渡らないので、warning を出して成功で終わります。`on: workflow_run` 経由では secret が渡りますが、run の head repository が呼び出し元と違えば notice を出して成功で終わります。job 名やログは fork 側が自由に書けるためです。
 - MONICA が受け取らなかったとき (4xx、リトライ後の 5xx、30 秒のタイムアウト) は notify job が失敗します。
 
