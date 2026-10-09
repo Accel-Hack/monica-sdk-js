@@ -55,7 +55,7 @@ export function buildItem({ repo, run, job, log }) {
       // MONICA titles the issue from the last value and renders each value in a <pre>, so the title goes last.
       values: [
         { type: "Log", value: `${header}\n\n${log ?? "(log unavailable)"}` },
-        { type: "JobFailed", value: `${repo} / ${job.name} ${job.html_url}` },
+        { type: "JobFailed", value: `[${repo}] ${job.name} ${job.html_url}` },
       ],
     },
     tags: {
