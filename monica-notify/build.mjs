@@ -41,7 +41,11 @@ export function buildItem({ repo, run, job, log }) {
   const step = failedStep(job);
   const pr = run.pull_requests?.[0]?.number;
   const branch = run.head_branch ?? "";
-  const title = `${repo} ${run.name} / ${job.name} (${pr ? `#${pr}` : branch})${step ? `: ${step.name}` : ""} ${job.html_url}`;
+  const header = [
+    `workflow: ${run.name}`,
+    `branch: ${branch}${pr ? ` (#${pr})` : ""}`,
+    ...(step ? [`step: ${step.name}`] : []),
+  ].join("\n");
   return {
     type: "error",
     event_id: eventIdFor(job.id),
@@ -50,8 +54,8 @@ export function buildItem({ repo, run, job, log }) {
     exception: {
       // MONICA titles the issue from the last value and renders each value in a <pre>, so the title goes last.
       values: [
-        { type: "Log", value: `${job.html_url}\n\n${log ?? "(log unavailable)"}` },
-        { type: "JobFailed", value: title },
+        { type: "Log", value: `${header}\n\n${log ?? "(log unavailable)"}` },
+        { type: "JobFailed", value: `[${repo}] ${job.name} ${job.html_url}` },
       ],
     },
     tags: {
