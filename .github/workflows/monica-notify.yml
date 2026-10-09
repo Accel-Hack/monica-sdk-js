@@ -1,0 +1,26 @@
+name: Notify MONICA
+
+# 他の repository の workflow から呼ぶ reusable workflow。失敗した job ごとにログ末尾を MONICA へ送る。
+# 呼び出し方は monica-notify/README.md。script は常に main から取るので、main への merge は
+# 呼び出している全 repository に即時に効く。
+
+on:
+  workflow_call:
+    secrets:
+      MONICA_CI_DSN:
+        required: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: Accel-Hack/monica-sdk-js
+          ref: main
+          sparse-checkout: monica-notify
+      - run: npm ci --prefix monica-notify && node monica-notify/index.mjs
+        env:
+          MONICA_DSN: ${{ secrets.MONICA_CI_DSN }}
+          GITHUB_TOKEN: ${{ github.token }}
