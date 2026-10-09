@@ -66,7 +66,7 @@ grouping が壊れる書き方があるので、SDK が守るべきことをこ�
 - 配布物（browser とモバイル）は public key を使い、端末ごとに interval に 1 回だけ送る。起点を端末のストレージ（browser は `localStorage`、無ければ `sessionStorage`。Android は SharedPreferences、iOS は UserDefaults）に持ち、プロセスやタブを再起動しても interval 以内なら送らない
 - モバイル（Android / iOS）はプロセス起動時と、フォアグラウンド復帰時に判定して `"start"` を送る。フォアグラウンド中は既存の flush timer の tick で `"interval"` を送ってよい。heartbeat 用の timer は新しく作らない。Android はバックグラウンド中は判定しない。OS が network を遮断するので、試みると起点を消費して復帰後も interval の間送れなくなる。iOS は OS がバックグラウンドでプロセスを止めるので判定も止まる。バックグラウンド実行を許されたアプリでは tick が動くが、network は遮断されないので害は無い。`"stop"` は送らない（OS が kill するので確実に送れない）。`platform` は error item と同じ値で、Android は `java`、iOS は `swift`
 - browser はページ読み込み時と、タブや WebView が再び可視になったとき（`visibilitychange`）に判定して `"start"` を送る。`"interval"` のタイマーは持たない。何日も開きっぱなしのタブは可視化で拾う
-- 配布物はさらに `presence.sample_rate`（既定 1、0〜1）の確率で間引ける。既定は間引かない。母数が小さい配布物では間引きが沈黙の誤判定に直結するため、大規模な配布物だけが MONICA の project 設定で下げる。組み込む側のアプリに option は持たせない
+- 配布物はさらに `presence.sample_rate`（既定 1、0〜1）の確率で間引ける。既定は間引かない。母数が小さい配布物では間引きが沈黙の誤判定に直結するため、大規模な配布物だけが MONICA の API key ごとの設定で下げる。組み込む側のアプリに option は持たせない
 - rate limit は通常の envelope と同じ枠で数える。`client_report` だけの特例は無い
 - `202` の応答に `presence.override_headers` の header（`X-Monica-Presence-Interval-Ms` と `X-Monica-Presence-Sample-Rate`）があれば値を保存し、次の判定から interval と sample rate に使う。値は指数表記を使わない 10 進数（interval は整数のミリ秒）。配布物は端末のストレージ、サーバ SDK はプロセス内に持つ。header が無い応答では保存した値を消さない。値が壊れている（数値でない、interval が整数でないか `presence.min_interval_ms` 未満、rate が `presence.min_sample_rate`（0.01）未満か 1 より大きい）ときはその header を無視する。優先順位は MONICA の設定 > 契約の既定値
 
