@@ -1,0 +1,28 @@
+name: monica-notify test
+
+# monica-notify/ は bun の workspace の外にある npm package なので、ci.yml とは別に回す。
+# 本番と同じ Node で試すため setup-node は使わない。
+
+on:
+  pull_request:
+    paths: ["monica-notify/**"]
+  push:
+    branches: [main]
+    paths: ["monica-notify/**"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: ./monica-notify
+
+jobs:
+  test:
+    name: monica-notify
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - run: npm ci
+      - run: npm test
