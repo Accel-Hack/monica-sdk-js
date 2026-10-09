@@ -18,8 +18,7 @@ GitHub Actions の job が失敗したとき、失敗した job 1 件につき 1
       MONICA_CI_DSN: ${{ secrets.MONICA_CI_DSN }}
 ```
 
-- org secret `MONICA_CI_DSN` に、MONICA の secret key (`msk_`) の DSN を入れておきます。
-- `secrets: inherit` は使いません。呼び出し元の secret (deploy 用の鍵など) がすべて、この repository の main から動く script に渡ってしまうためです。
+- secret は org で共通にせず、呼び出す repository ごとに作ります。その repository の secret `MONICA_CI_DSN` に、MONICA の secret key (`msk_`) の DSN を入れておきます。
 - `needs` に書き忘れた job は拾えません。その job だけが失敗したときは `failure()` が偽になり、notify job が動きません。
 - `on: workflow_run` で起動した workflow から呼ぶと、起動元の run の失敗を送ります。
 
