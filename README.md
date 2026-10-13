@@ -14,8 +14,7 @@ npm に `@ah-monica/*` として 4 package を公開している。
 
 4 package はすべて ESM で、同じ版で一括してリリースする。
 ブラウザ向けの `@ah-monica/browser` と `@ah-monica/react` は別 repository（`monica-sdk-browser`）にある。
-GitHub Actions の job の失敗を送る composite action は [`monica-notify/`](monica-notify/README.md) にある。
-これは npm に公開せず、呼び出し側が commit SHA で固定して使う。
+GitHub Actions の job の失敗を送る composite action は別 repository（[`monica-github-actions`](https://github.com/Accel-Hack/monica-github-actions)）にある。
 
 ## インストール
 
